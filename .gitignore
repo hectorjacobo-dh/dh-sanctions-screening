@@ -42,3 +42,4 @@ dist/
 .idea/
 .DS_Store
 Thumbs.db
+data/calibration-detail.csv

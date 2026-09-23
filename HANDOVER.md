@@ -1,0 +1,222 @@
+# Handover
+
+For whoever maintains this next. Written by the person who built it, while the
+whole codebase was still in one head.
+
+It assumes you are a competent engineer who has never seen this project, and
+knows nothing about sanctions screening. It tells you the parts that are not
+obvious from reading the code, and it is honest about what is unfinished.
+
+---
+
+## 1. What this is
+
+A sanctions screening engine for Delivery Hero Compliance. It downloads the
+OFAC, EU, UK and UN designation lists daily, screens counterparty names against
+them, and records every search and decision in a tamper-evident log.
+
+It replaced a manual Excel and Power Query process with three defects: exact
+matching only (so "UAC" never found "United Aircraft Corporation"), lists
+refreshed by hand and therefore stale, and no record of who decided what.
+
+**Who uses it:** Compliance officers. Not engineers. Treat every screen as
+something a non-technical person has to read under time pressure and be able
+to defend to an auditor afterwards.
+
+## 2. Run it
+
+```bash
+cd backend
+python -m venv .venv && .venv/Scripts/pip install -r requirements.txt
+PYTHONPATH=. .venv/Scripts/python -m pytest tests/       # 189 tests, ~3s
+PYTHONPATH=. .venv/Scripts/python serve.py               # http://127.0.0.1:8000
+```
+
+On the officer's laptop a Windows scheduled task runs `serve.py` at logon plus
+a five-minute watchdog (`autostart-install.ps1`). `docker-compose.yml` brings up
+Postgres and the API for a shared deployment.
+
+There is **no frontend build step**. `frontend/` is an abandoned React scaffold
+— see its `SUPERSEDED.md`. The entire interface is `backend/app/static/index.html`,
+served at `/`.
+
+## 3. Layout
+
+| Path | What lives there |
+|---|---|
+| `app/ingest/` | One adapter per regulator, all flattening onto `CanonicalTarget` |
+| `app/ingest/endpoints.py` | URL recovery when a regulator moves a file |
+| `app/ingest/identity.py` | Pulls DOB, nationality, documents out of OFAC's free text |
+| `app/matching.py` | Scoring. Start here for "why did/didn't this match?" |
+| `app/blocking.py` | The index that makes 33k×N comparisons tractable |
+| `app/geography.py` | Country resolution, ISO 3166-1 via pycountry |
+| `app/dismissal.py` | Resolution vocabulary: status → risk levels → reason |
+| `app/screening.py` | Batch runs, and all the upload-parsing heuristics |
+| `app/audit.py` | The hash chain |
+| `app/report.py`, `app/pdf_report.py` | CSV and PDF. **Two generators — see §6** |
+| `app/static/index.html` | The whole UI, one file |
+| `calibrate.py` | Validation harness. **Unfinished — see §7** |
+
+## 4. Things that will bite you
+
+**The four feeds each lie in their own way.** Every adapter has comments
+explaining the specific defect it works around. The three worst:
+
+- *The EU repeats `Entity_logical_id` six times* in its header, once per
+  sub-record block. A dict comprehension keeps the last, which is populated on
+  ~7% of rows. That broke grouping entirely: 6,234 parties appeared as 31,047
+  fragments, aliases never attached to their primary name, and every EU
+  identity field came through empty because the rows carrying DOB and
+  nationality hold no name and were dropped by the "no names" guard.
+- *OFAC publishes no identity columns.* Date of birth, nationality, passport
+  and national ID are all inside one free-text `remarks` field as
+  semicolon-delimited clauses. `identity.py` parses them; 99.93% of 92,813
+  clauses are classified, and `audit_clauses()` re-runs the census so a new
+  label shows up as residue rather than vanishing.
+- *OFSI publishes Windows-1252*, not UTF-8.
+
+**Aliases must be scored, not just indexed.** The blocking index recalls a
+designation by any published spelling, but scoring only the primary name threw
+that away — "UAC" reached "PUBLIC JOINT STOCK COMPANY UNITED AIRCRAFT
+CORPORATION" through its alias and then scored 8.9 against the primary. See
+`score_against_all_names`.
+
+**`recall_mode` is a deliberate policy split, not a tuning preference.** Manual
+search is recall-first (the officer typed one name and will read every row);
+batch is precision-first (nobody reads 28,000 alerts). Changing one calibration
+without the other will look like a bug in the other mode.
+
+**Never let a country resolve to the wrong country.** `resolve_country` splits
+on `/ ; |` but *not* on commas, because ISO publishes "Korea, North" and
+"Congo, Democratic Republic of the". Splitting on commas first made the latter
+resolve to CG — the *other* Congo — so the geographic control reported
+contradictions that did not exist. A bare ambiguous name ("Korea") resolves to
+nothing on purpose: guessing would be a fact stated from a coin flip.
+
+## 5. The rules the UI enforces, and why
+
+- **A signal states which side of a comparison is missing.** "not provided" was
+  ambiguous: it meant *the officer searched without a DOB*, but read as *the
+  sanctions record has no DOB*. An officer who believes the regulator holds no
+  date of birth has lost their strongest discriminator, in the direction of
+  clearing the alert.
+- **A false match cannot carry a risk grade** (`Unknown`/`N/A` only). "False /
+  Low" would sit in a report beside genuine low-risk positives and be counted
+  with them.
+- **Confirming or clearing requires a written rationale.** Both commit the
+  business to something.
+- **Deleting a case writes `SCREENING_RUN_DELETED` to the chain first**, with a
+  count of how much resolved work went with it. A screening may leave the
+  worklist, never the record.
+
+## 6. Traps that have already caught someone
+
+**There are two record generators.** `report.py` builds the CSV and the text
+dossier; `pdf_report.py` builds the PDF. Changing the vocabulary in one does not
+change the other — a first pass at renaming statuses edited only the TXT
+generator, which was then deleted, so the PDF was unchanged and looked fine
+until its text was extracted and read.
+
+**The test suite did not import the app.** A syntax error in a router shipped
+with 138 tests green; the only symptom was a server that refused connections.
+`tests/test_app_imports.py` now imports the app and every router and asserts the
+routes the UI calls are registered.
+
+**Duplicate test names silently delete coverage.** `test_matching.py`
+accumulated 33 shadowed definitions through repeated appends — Python keeps the
+last, so a third of the file never ran while the suite reported green. Guarded
+now in `test_app_imports.py`.
+
+**There is no JavaScript engine in CI.** `tests/test_frontend_syntax.py` is a
+set of static guards, each written after a specific defect broke the page:
+`const` shadowing a parameter, an odd backtick, a referenced element id that
+does not exist, a template reading a field the API never returns, and
+`renderRun` drawing rows before the status vocabulary had loaded. They are
+narrow on purpose. **Load the page in a browser before shipping UI changes** —
+the guards cannot do it for you.
+
+## 7. Unfinished, and it matters
+
+**The engine has never been validated against the manual process.** This is the
+gate before it becomes the control of record, and it is not a code task.
+
+`calibrate.py` is the harness. It has two modes and only one is validation:
+
+```bash
+# Real calibration. Needs the team's own spreadsheet.
+python calibrate.py --from-file "DH Group_Restaurants Matches in Sanctions Lists.xlsx"
+
+# Regression only. Reports 100% by construction — see below.
+python calibrate.py --from-archive "../archive/*/partner-data-archive.json"
+```
+
+The archive mode cannot validate anything, and the reason is worth
+understanding before anyone cites its output. The archive holds the engine's
+own past alerts, so the only names recoverable from it are ones the engine
+already matched. Of 234 names screened in September, 230 appear in alerts and
+the 4 that matched nothing left no trace. Asking "of the names it found, how
+many does it find?" returns 100% and means nothing. The script prints a warning
+saying so, and `deploy/CALIBRATION.md` leads with it.
+
+**To actually do this you need `DH Group_Restaurants Matches in Sanctions
+Lists.xlsx`** — the original file, all 379 rows. Compliance has it. Then:
+
+1. Run `--from-file`. Read every name scoring below the operating threshold.
+2. A low score is not automatically an engine fault: the manual process
+   produced false positives too, and a name it flagged may not be designated.
+   Each one has to be read by someone who knows the rules.
+3. Precision remains unmeasurable either way — that needs the names the team
+   screened and **cleared**, and no record of those survives. If anyone wants a
+   false-positive rate, that has to be captured going forward.
+
+**Other open items**
+
+- Ongoing screening: re-screen a monitored list on each refresh and show what
+  changed. Designed, never built. The data is there — `WatchlistRefresh` keeps
+  the payload digest and record count per snapshot.
+- Only 3 snapshots are retained (`SNAPSHOTS_RETAINED`), which is why "what
+  changed since last week?" could only be answered from an archive file.
+- Batch screening applies one brand to a whole file. If uploads span brands,
+  that belongs in a column in the template instead.
+
+## 8. Data and privacy
+
+The application stores **public designation data only**. Names to be screened
+are uploaded at screening time and no customer, partner or employee records are
+retained.
+
+Two exceptions, both outside git:
+
+- `archive/` — the pre-purge archive: 902 alerts and **236 personal (UBO)
+  names**, retained as evidence the purge ran correctly. Gitignored, because git
+  history is effectively permanent. It belongs wherever Compliance keeps
+  retained records, not in a source tree. There are currently two identical
+  copies; one is enough.
+- `data/screening.db` and `data/calibration-detail.csv` — live screening output.
+  Gitignored.
+
+`backend/purge_partner_data.py` is how the purge was done: archive, read the
+archive back, verify the counts, then delete, and restart the hash chain with
+an event recording that it happened. Re-read it before doing anything similar.
+
+## 9. If a feed breaks
+
+The likeliest failure. It is quiet: the list stops refreshing while everything
+else works, and the dashboard turns the source red after 48 hours.
+
+`app/ingest/endpoints.py` tries the configured URL, then the last one that
+worked, then known mirrors, then scrapes the regulator's own download page. Any
+candidate must parse with that source's adapter and yield at least 60% of the
+records it produced last time.
+
+That floor exists because reachability proves nothing:
+`ofac.treasury.gov/media/5926/download` answers 200 with a non-HTML body and is
+**not** the SDN list — 199 KB against 5.7 MB. Accepting it would have replaced
+the watchlist with something 96% smaller and every screening afterwards would
+have come back clean for the wrong reason.
+
+If all of that fails, the adapter needs a person: a **format** change cannot be
+recovered automatically. The engine fails safely — it refuses to activate a
+snapshot it cannot parse and leaves the previous one in place — but someone has
+to fix it. Set `OFAC_SDN_URL` (or the equivalent) in the environment to
+override, or drop a manually downloaded copy at the path named in the error.
