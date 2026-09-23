@@ -1,0 +1,49 @@
+# Shared deployment. Intended for an internal, access-controlled network —
+# see the security section of the README before exposing this anywhere.
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: screening
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: screening
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U screening"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    # Not published to the host: only the API needs to reach it.
+
+  api:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://screening:${POSTGRES_PASSWORD}@db:5432/screening
+      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env}
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-admin@localhost}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+      # Same-origin: the API serves its own interface, so no CORS origin
+      # needs to be allowed by default.
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      REFRESH_ON_STARTUP: ${REFRESH_ON_STARTUP:-true}
+    volumes:
+      - ./data:/srv/data
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    # Bound to loopback: put a reverse proxy with TLS and SSO in front.
+    ports:
+      - "127.0.0.1:8000:8000"
+
+  # There is no separate web container. The API serves the interface itself at
+  # "/" from backend/app/static/index.html — one page, no build step. A second
+  # service here used to build ./frontend, a React scaffold superseded in
+  # September; bringing the stack up served that stale copy on :8080 beside the
+  # real one on :8000.
+
+volumes:
+  db_data:

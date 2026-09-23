@@ -1,0 +1,1799 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex, nofollow" />
+<title>DH Group — Sanctions Screening Engine</title>
+<style>
+  :root{
+    --bg:#0f1115; --surface:#171a21; --surface2:#1e222b; --border:#2a2f3a;
+    --text:#e6e8ec; --dim:#9aa1ae; --accent:#2563eb; --accent2:#1d4ed8;
+    --ok:#2ecc71; --warn:#f5a623; --danger:#ff4d4f; --info:#4aa3ff;
+    --mono:ui-monospace,SFMono-Regular,Consolas,Menlo,monospace;
+  }
+  /* Light tokens. Applied by OS preference, and overridable by the toggle —
+     the [data-theme] selectors outrank the media query in both directions. */
+  @media (prefers-color-scheme:light){
+    :root{--bg:#f5f6f8;--surface:#fff;--surface2:#f0f2f5;--border:#d9dde4;--text:#14171c;--dim:#5b6472;}
+  }
+  :root[data-theme="light"]{
+    --bg:#f5f6f8;--surface:#fff;--surface2:#f0f2f5;--border:#d9dde4;--text:#14171c;--dim:#5b6472;
+  }
+  :root[data-theme="dark"]{
+    --bg:#0f1115;--surface:#171a21;--surface2:#1e222b;--border:#2a2f3a;--text:#e6e8ec;--dim:#9aa1ae;
+  }
+  #themeBtn{padding:6px 10px;font-size:12px;min-width:96px}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  button{font:inherit;cursor:pointer;border:1px solid var(--border);background:var(--surface2);color:var(--text);border-radius:8px;padding:8px 14px}
+  button:hover:not(:disabled){border-color:var(--accent)}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+  button.primary:hover:not(:disabled){background:var(--accent2)}
+  input,select,textarea{font:inherit;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 9px;width:100%}
+  header.top{display:flex;align-items:center;gap:14px;padding:12px 22px;background:var(--surface);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:20}
+  header.top h1{font-size:15px;margin:0;font-weight:700}
+  .spacer{flex:1}
+  nav.tabs{display:flex;gap:2px;padding:0 22px;background:var(--surface);border-bottom:1px solid var(--border);position:sticky;top:49px;z-index:19}
+  nav.tabs button{border:none;border-bottom:2px solid transparent;background:none;border-radius:0;padding:10px 14px;color:var(--dim)}
+  nav.tabs button.active{color:var(--text);border-bottom-color:var(--accent);font-weight:600}
+  main{padding:22px;max-width:1600px;margin:0 auto}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px;margin-bottom:18px}
+  .card h2{margin:0 0 4px;font-size:15px}
+  .sub{color:var(--dim);font-size:13px;margin:0 0 14px}
+  .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+  .between{justify-content:space-between}
+  .tiles{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(210px,1fr))}
+  .tile{background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:13px}
+  .tile .nm{font-weight:600;display:flex;align-items:center;gap:8px}
+  .tile .ct{font-size:21px;font-weight:700;margin:6px 0 2px;font-variant-numeric:tabular-nums}
+  .tile .mt{color:var(--dim);font-size:11.5px;font-family:var(--mono);word-break:break-all}
+  .dot{width:8px;height:8px;border-radius:50%;flex:none;display:inline-block}
+  .dot.ok{background:var(--ok)} .dot.warn{background:var(--warn)} .dot.err{background:var(--danger)}
+  .dot.run{background:var(--info);animation:pulse 1s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+  .banner{border-radius:10px;padding:11px 13px;margin-bottom:14px;border:1px solid;font-size:13px}
+  .banner.warn{background:rgba(245,166,35,.1);border-color:var(--warn);color:var(--warn)}
+  .banner.err{background:rgba(255,77,79,.1);border-color:var(--danger);color:var(--danger)}
+  .banner.ok{background:rgba(46,204,113,.1);border-color:var(--ok);color:var(--ok)}
+  .banner.info{background:rgba(74,163,255,.1);border-color:var(--info);color:var(--info)}
+  .drop{border:2px dashed var(--border);border-radius:10px;padding:36px 18px;text-align:center;color:var(--dim);cursor:pointer}
+  .drop.on{border-color:var(--accent);background:rgba(37,99,235,.07);color:var(--text)}
+  .drop .big{font-size:15px;color:var(--text);font-weight:600;margin-bottom:5px}
+  .bar{height:6px;background:var(--surface2);border-radius:3px;overflow:hidden;margin-top:10px}
+  .bar>div{height:100%;background:var(--accent);transition:width .3s}
+  .tw{overflow-x:auto;border:1px solid var(--border);border-radius:10px}
+  table{border-collapse:collapse;width:100%;font-size:13px}
+  th,td{text-align:left;padding:9px 11px;border-bottom:1px solid var(--border);vertical-align:top}
+  th{background:var(--surface2);font-weight:600;white-space:nowrap;position:sticky;top:0}
+  tbody tr:hover{background:var(--surface2)}
+  td.num{font-variant-numeric:tabular-nums;font-family:var(--mono)}
+  .badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600;border:1px solid;white-space:nowrap}
+  .badge.strong{color:var(--danger);border-color:var(--danger);background:rgba(255,77,79,.1)}
+  .badge.potential{color:var(--warn);border-color:var(--warn);background:rgba(245,166,35,.1)}
+  .badge.weak{color:var(--dim);border-color:var(--border)}
+  .badge.geo{color:var(--info);border-color:var(--info);background:rgba(74,163,255,.1)}
+  .rc{display:flex;gap:4px;flex-wrap:wrap;margin-top:4px}
+  .rc span{font-size:10px;font-family:var(--mono);color:var(--dim);border:1px solid var(--border);border-radius:4px;padding:1px 5px}
+  .dim{color:var(--dim)} .mono{font-family:var(--mono);font-size:12px}
+
+  /* The published record, and the grounds for listing. Both are quoted from
+     the regulator, so they are styled as evidence rather than as chrome. */
+  /* Which published spelling scored. A score shown against a string the
+     reviewer cannot find on the record is not defensible. */
+  .mal{font-size:11px;color:var(--accent);margin-top:2px}
+  .pub{min-width:210px;font-size:11.5px;line-height:1.5}
+  .pl{margin-bottom:2px}
+  .plk{display:inline-block;min-width:104px;color:var(--dim)}
+  .hitrow>td{border-bottom:none}
+  .whyrow>td{padding-top:0;font-size:11.5px}
+  .whyh{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);margin:2px 0 4px}
+  .whyq{border-left:2px solid var(--accent);padding:2px 0 2px 9px;line-height:1.5;
+        max-height:7.5em;overflow:auto}
+  .whys{color:var(--dim);font-size:11px;margin-top:3px;line-height:1.45}
+  .whym{margin-top:6px;padding-top:6px;border-top:1px dashed var(--border)}
+
+  /* --- adjudication save state --- */
+  .savebar{
+    display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+    background:var(--surface2);border:1px solid var(--border);border-radius:10px;
+    padding:10px 14px;margin:14px 0;position:sticky;bottom:14px;z-index:5;
+  }
+  .savebar.dirty{border-color:var(--warn);background:rgba(245,166,35,.10)}
+  .savebar .spacer{flex:1}
+  tr.row-dirty{background:rgba(245,166,35,.07)}
+  tr.row-saved{background:rgba(46,204,113,.06)}
+  td.st{white-space:nowrap;font-family:var(--mono);font-size:10.5px;color:var(--dim)}
+  .s-dirty{color:var(--warn);font-weight:600}
+  .s-saving{color:var(--info)}
+  .s-saved{color:var(--ok)}
+  .s-error{color:var(--danger);font-weight:600}
+  /* --- adjudication detail panel --- */
+  tr.detail > td{background:var(--surface2);padding:0}
+  .adj{padding:16px 18px;display:grid;gap:14px}
+  @media (min-width:900px){.adj{grid-template-columns:1fr 1fr}}
+  .adj h4{margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim);font-weight:600}
+  .adj .full{grid-column:1/-1}
+  .guide{font-size:12px;color:var(--dim);margin-top:6px;line-height:1.45}
+  .ev{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+  .ev .doc{display:flex;gap:8px;align-items:baseline;font-size:12.5px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:7px 10px}
+  .ev .doc a{color:var(--accent);text-decoration:none;font-weight:600}
+  .ev .doc a:hover{text-decoration:underline}
+  .ev .doc .h{font-family:var(--mono);font-size:10.5px;color:var(--dim);word-break:break-all}
+  /* Resolution matrix: status and the risk level it implies, selected as one. */
+  .rmx{width:100%;border-collapse:collapse;font-size:13px}
+  .rmx th{text-align:left;font-size:10px;letter-spacing:.07em;text-transform:uppercase;
+          color:var(--dim);font-weight:600;padding:0 8px 5px}
+  .rmx td{padding:7px 8px;border-top:1px solid var(--border);cursor:pointer}
+  .rmx tbody tr:hover td{background:var(--hover,rgba(127,127,127,.10))}
+  .rmx tbody tr.on td{background:var(--accent);color:#fff;font-weight:600}
+  .rmx td.rl{color:var(--dim);width:42%}
+  .reasonval{font-size:13px;padding:7px 0;font-weight:600}
+  .rmx tbody tr.on td.rl{color:#fff}
+  .evdrop{border:1px dashed var(--border);border-radius:8px;padding:14px;text-align:center;color:var(--dim);cursor:pointer;font-size:13px;margin-top:8px}
+  .evdrop:hover{border-color:var(--accent);color:var(--text)}
+  /* An action needs to look like one. This was blue text and people did
+     not see it as the way into the resolution panel. */
+  .expand{font-size:12px;padding:5px 12px;white-space:nowrap}
+  .clip{display:inline-block;font-family:var(--mono);font-size:10px;border:1px solid var(--border);border-radius:4px;padding:1px 5px;color:var(--dim)}
+  /* --- automatic document cross-check --- */
+  .xc{margin-top:8px;border:1px solid var(--border);border-radius:8px;padding:10px 12px;background:var(--surface)}
+  .xc .rec{font-size:12.5px;margin-bottom:8px}
+  .xc .f{display:flex;gap:8px;align-items:baseline;font-size:12px;padding:4px 0;border-top:1px solid var(--border)}
+  .xc .f:first-of-type{border-top:none}
+  .xc .f .k{flex:none;width:172px;color:var(--dim)}
+  .vd{flex:none;font-family:var(--mono);font-size:9.5px;letter-spacing:.04em;text-transform:uppercase;border:1px solid;border-radius:4px;padding:1px 5px}
+  .vd.corroborates{color:var(--ok);border-color:var(--ok)}
+  .vd.contradicts{color:var(--danger);border-color:var(--danger)}
+  .vd.neutral{color:var(--dim);border-color:var(--border)}
+  .vd.unreadable{color:var(--warn);border-color:var(--warn)}
+  /* --- sign-in overlay --- */
+  #gate{position:fixed;inset:0;z-index:100;background:var(--bg);display:grid;place-items:center;padding:24px}
+  #gate .box{width:100%;max-width:380px;background:var(--surface);border:1px solid var(--border);
+    border-radius:10px;padding:26px}
+  #gate h2{margin:0 0 4px;font-size:18px}
+  #gate .sub{margin:0 0 18px}
+  #gate label{display:block;margin:14px 0 6px;font-size:12.5px;color:var(--dim)}
+  #gate button{width:100%;margin-top:18px}
+  .whoami{font-size:12.5px;color:var(--dim)}
+  .rolechip{font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;
+    border:1px solid var(--border);border-radius:4px;padding:1px 6px;color:var(--dim)}
+  .empty{text-align:center;padding:44px 16px;color:var(--dim)}
+  .hide{display:none !important}
+</style>
+</head>
+<body>
+
+<div id="gate" class="hide">
+  <form class="box" id="loginForm">
+    <h2>Sanctions Screening Engine</h2>
+    <p class="sub">Delivery Hero Group — Compliance. Sign in with your work account.</p>
+    <label for="liEmail">Work email</label>
+    <input id="liEmail" type="email" autocomplete="username" required />
+    <label for="liPw">Password</label>
+    <input id="liPw" type="password" autocomplete="current-password" required />
+    <button class="primary" type="submit" id="liBtn">Sign in</button>
+    <div id="liErr"></div>
+  </form>
+</div>
+
+<header class="top">
+  <h1>DH Group — Sanctions Screening Engine</h1>
+  <div class="spacer"></div>
+  <span class="whoami" id="whoami"></span>
+  <span class="dim mono" id="mode"></span>
+  <button id="themeBtn" type="button" title="Switch between dark, light and your system setting"></button>
+  <button id="btnSignOut" type="button" class="hide">Sign out</button>
+</header>
+
+<nav class="tabs">
+  <button data-tab="search" class="active">Name search</button>
+  <button data-tab="screening">Batch screening</button>
+  <button data-tab="resolution">Case manager</button>
+  <button data-tab="watchlists">Watchlists</button>
+  <button data-tab="audit">Audit trail</button>
+  <button data-tab="users" id="tabUsers" class="hide">Users</button>
+</nav>
+
+<main>
+  <div id="globalError"></div>
+
+  <!-- ================= NAME SEARCH ================= -->
+  <section id="tab-search">
+    <div class="card">
+      <h2>Search a single name</h2>
+
+      <div class="row" style="align-items:flex-end;gap:10px">
+        <div style="flex:1;min-width:280px">
+          <label class="dim" style="font-size:12px">Name (entity or individual)</label>
+          <input id="qName" placeholder="e.g. United Aircraft Corporation, or Ivanov Sergey" autocomplete="off" />
+        </div>
+        <button class="primary" id="btnSearch">Search</button>
+      </div>
+
+      <div class="row" style="margin-top:12px;gap:10px">
+        <div style="width:150px" id="fldDob">
+          <label class="dim" style="font-size:12px">Date of birth</label>
+          <input id="qDob" placeholder="1975 or 12/03/1975" autocomplete="off" />
+        </div>
+        <div style="width:160px" id="fldNat">
+          <label class="dim" style="font-size:12px">Nationality</label>
+          <input id="qNat" list="countryList" placeholder="Start typing a country" autocomplete="off" />
+        </div>
+        <!-- One control, two meanings. A company has a country of registration;
+             a person has a country they are located in. Showing both to both
+             invited an officer to type a registration country into a field the
+             engine compares against a person's nationality. -->
+        <div style="width:170px" id="fldCountry">
+          <label class="dim" style="font-size:12px" id="lblCountry">Country location</label>
+          <input id="qCountry" list="countryList" placeholder="Start typing a country" autocomplete="off" />
+        </div>
+        <!-- One list, shared by every country and nationality control.
+             A native datalist filters as you type and still accepts free text,
+             so a spelling the regulators use but ISO does not ("Burma") is not
+             rejected — the matcher understands both. -->
+        <datalist id="countryList"></datalist>
+        <div style="width:170px" id="fldId">
+          <label class="dim" style="font-size:12px" id="lblId">National / passport ID</label>
+          <input id="qId" placeholder="ID or passport no." autocomplete="off" />
+        </div>
+      </div>
+
+      <!-- Who the counterparty is to us, and which market owns the answer.
+           Stamped on the case so the worklist can be filtered and an alert
+           escalated to the right people without anyone having to guess. -->
+      <div class="row" style="margin-top:12px;gap:10px">
+        <div style="width:180px">
+          <label class="dim" style="font-size:12px">Counterparty type</label>
+          <select id="qGroup"></select>
+        </div>
+        <div style="width:200px">
+          <label class="dim" style="font-size:12px">Brand</label>
+          <select id="qBrand"></select>
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:14px;gap:18px;align-items:flex-end">
+        <div style="width:280px">
+          <label class="dim" style="font-size:12px">
+            Fuzziness — match threshold: <strong id="qThVal">75%</strong>
+          </label>
+          <input type="range" id="qTh" min="50" max="100" value="75" />
+          <div class="dim" style="font-size:11px;margin-top:2px">
+            lower = broader, noisier · higher = stricter, riskier
+          </div>
+        </div>
+        <div>
+          <label class="dim" style="font-size:12px;display:block;margin-bottom:5px">Subject type</label>
+          <div class="row" style="gap:12px">
+            <label class="dim" style="font-size:12.5px"><input type="checkbox" class="qST" value="Individual" checked style="width:auto"> Individual</label>
+            <label class="dim" style="font-size:12.5px"><input type="checkbox" class="qST" value="Entity" checked style="width:auto"> Entity</label>
+            <label class="dim" style="font-size:12.5px"><input type="checkbox" class="qST" value="Vessel" style="width:auto"> Vessel</label>
+            <label class="dim" style="font-size:12.5px"><input type="checkbox" class="qST" value="Aircraft" style="width:auto"> Aircraft</label>
+            <label class="dim" style="font-size:12.5px"><input type="checkbox" class="qST" value="Unknown" checked style="width:auto"> Unknown</label>
+          </div>
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:14px;gap:10px;align-items:flex-end">
+        <div style="width:190px">
+          <label class="dim" style="font-size:12px">Internal reference (optional)</label>
+          <input id="qRef" placeholder="GRID, ticket, case no." autocomplete="off" />
+        </div>
+        <div style="flex:1;min-width:230px">
+          <label class="dim" style="font-size:12px">Why is this party being screened? (optional)</label>
+          <input id="qNote" placeholder="e.g. new partner onboarding, periodic review" autocomplete="off" />
+        </div>
+        <button id="btnCase">Create case for review</button>
+      </div>
+      <div id="caseResult"></div>
+      <div id="searchMeta" class="sub" style="margin-top:14px"></div>
+      <div id="searchResult"></div>
+    </div>
+  </section>
+
+  <!-- ================= SCREENING ================= -->
+  <section id="tab-screening" class="hide">
+    <div id="startupNote"></div>
+
+    <div class="card">
+      <h2>Batch screening</h2>
+      <p class="sub">
+        Screen a list of counterparties in one pass — partners, restaurants, vendors,
+        suppliers, UBOs or any other name. Upload in <strong>CSV or XLSX</strong>
+        format. No reformatting is required: the name column is identified
+        automatically, including where it appears on a secondary sheet, beneath a
+        title row, or under a non-standard heading such as
+        <span class="mono">Razón Social</span> or <span class="mono">Vendor</span>.
+      </p>
+      <p class="sub" style="margin-bottom:10px">
+        Download the <a href="#" id="tplCsv">Batch by Name CSV template</a> or
+        <a href="#" id="tplXlsx">XLSX template</a>.
+      </p>
+      <div class="drop" id="drop">
+        <div class="big" id="dropName">Drag and drop a CSV / XLSX file to upload here</div>
+        <div id="dropHint">or click to select a file</div>
+        <input type="file" id="file"
+               accept=".csv,.txt,.xlsx,.xlsm,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+               class="hide" />
+      </div>
+      <div id="detectNote"></div>
+      <div class="row" style="margin-top:12px;gap:10px">
+        <div style="width:180px">
+          <label class="dim" style="font-size:12px">Counterparty type</label>
+          <select id="bGroup"></select>
+        </div>
+        <div style="width:200px">
+          <label class="dim" style="font-size:12px">Brand</label>
+          <select id="bBrand"></select>
+        </div>
+        <span class="dim" style="font-size:11.5px">Applies to every name in the file —
+          it is how an alert reaches the right market.</span>
+      </div>
+      <div class="row" style="margin-top:14px;align-items:flex-end">
+        <div style="width:230px">
+          <label class="dim" style="font-size:13px">Match threshold: <strong id="thVal">80%</strong></label>
+          <input type="range" id="th" min="60" max="100" value="80" />
+        </div>
+        <div style="width:230px">
+          <label class="dim" style="font-size:13px">Geographic de-prioritisation: <strong id="geoVal">−15</strong></label>
+          <input type="range" id="geo" min="0" max="40" value="15" />
+        </div>
+        <button class="primary" id="btnRun" disabled>Run batch screening</button>
+      </div>
+      <div id="uploadError"></div>
+    </div>
+
+  </section>
+
+  <!-- ================= CASE RESOLUTION =================
+       Its own section on purpose. Resolving alerts is a different task from
+       submitting a file, performed at a different time and often by a
+       different person; nesting it under the upload form implied the two
+       belonged to one sitting. -->
+  <section id="tab-resolution" class="hide">
+    <div class="card">
+      <div class="row between">
+        <div>
+          <h2>Case manager</h2>
+          <p class="sub" style="margin:0">Open a case to review and resolve its alerts.</p>
+        </div>
+        <div class="row" style="gap:8px">
+          <button id="btnBulk" title="Download the adjudication report for every case listed below">Download all listed (CSV)</button>
+          <button id="btnReloadCases">Reload</button>
+        </div>
+      </div>
+      <div class="row" style="margin-top:12px;gap:10px">
+        <div style="width:210px"><select id="fGroup"></select></div>
+        <div style="width:210px"><select id="fBrand"></select></div>
+        <span class="dim" id="caseCount" style="font-size:12px"></span>
+      </div>
+      <div class="tw" style="margin-top:12px"><table>
+        <thead><tr><th>Opened</th><th>Case</th><th>Type</th><th>Brand</th><th>Status</th><th>Alerts</th><th></th></tr></thead>
+        <tbody id="casesBody"></tbody>
+      </table></div>
+    </div>
+
+    <div id="runDetail"></div>
+  </section>
+
+  <!-- ================= WATCHLISTS ================= -->
+  <section id="tab-watchlists" class="hide">
+    <div class="card">
+      <div class="row between">
+        <div>
+          <h2>Watchlist status</h2>
+          <p class="sub" id="wlSummary" style="margin:0 0 4px">Loading…</p>
+          <p class="sub" style="margin:0">
+            Refreshed automatically each day at 03:15 UTC (early morning Berlin time), and when you open
+            this page if any list is more than 24 hours old.
+          </p>
+        </div>
+        <div class="row" style="gap:8px">
+          <button id="btnSnapshot">Export snapshot for the workbench</button>
+          <button class="primary" id="btnRefreshAll2">Refresh all lists</button>
+        </div>
+      </div>
+      <div class="tiles" id="wlTiles" style="margin-top:14px"></div>
+    </div>
+  </section>
+
+  <!-- ================= AUDIT ================= -->
+  <section id="tab-audit" class="hide">
+    <div class="card">
+      <h2>Audit trail integrity</h2>
+      <p class="sub">
+        Every refresh, screening run, adjudication and export is appended to a hash-chained log.
+        Each entry commits to the hash of the one before it, so editing or deleting any historic
+        record invalidates every later hash and is detected here.
+      </p>
+      <div class="row">
+        <button class="primary" id="btnVerify">Verify chain</button>
+        <span class="dim" id="auditCount"></span>
+      </div>
+      <div id="verifyResult"></div>
+      <div id="auditStats" style="margin-top:14px"></div>
+    </div>
+
+    <!-- Screening runs belong to the record of what was done, not to the
+         upload form. Every run here is an entry in the chain above. -->
+    <div class="card" id="runsCard">
+      <h2>Screening runs</h2>
+      <p class="sub">Every screening performed, in order. Open one to resolve its alerts.</p>
+      <div class="tw"><table>
+        <thead><tr><th>Started</th><th>File</th><th>Status</th><th>Rows</th><th>Alerts</th><th></th></tr></thead>
+        <tbody id="runsBody"></tbody>
+      </table></div>
+    </div>
+  </section>
+  <!-- ================= USERS ================= -->
+  <section id="tab-users" class="hide">
+    <div class="card">
+      <h2>Add a colleague</h2>
+      <p class="sub">
+        Choose the narrowest role that lets someone do their job.
+        <strong>Analyst</strong> screens and adjudicates. <strong>Viewer</strong> reads only —
+        use it for reviewers who should never alter a decision. <strong>Admin</strong> can also
+        refresh watchlists and manage users.
+      </p>
+      <div class="row" style="align-items:flex-end;gap:10px">
+        <div style="flex:1;min-width:220px">
+          <label class="dim" style="font-size:12px">Work email</label>
+          <input id="nuEmail" type="email" placeholder="name@deliveryhero.com" autocomplete="off" />
+        </div>
+        <div style="width:150px">
+          <label class="dim" style="font-size:12px">Full name</label>
+          <input id="nuName" placeholder="optional" autocomplete="off" />
+        </div>
+        <div style="width:130px">
+          <label class="dim" style="font-size:12px">Role</label>
+          <select id="nuRole">
+            <option value="analyst">Analyst</option>
+            <option value="viewer">Viewer</option>
+            <option value="admin">Admin</option>
+          </select>
+        </div>
+        <div style="width:150px">
+          <label class="dim" style="font-size:12px">Region</label>
+          <input id="nuRegion" placeholder="optional" autocomplete="off" />
+        </div>
+        <button class="primary" id="btnAddUser">Create account</button>
+      </div>
+      <p class="sub" style="margin:10px 0 0">
+        A temporary password is generated and shown to you <strong>once</strong> — it is stored
+        only as a hash and cannot be recovered. Send it to the person and have them change it.
+      </p>
+      <div id="nuResult"></div>
+    </div>
+
+    <div class="card">
+      <h2>Accounts</h2>
+      <p class="sub">Deactivating keeps the person's past decisions in the audit trail;
+        it only stops them signing in.</p>
+      <div class="tw"><table>
+        <thead><tr><th>Email</th><th>Name</th><th>Role</th><th>Region</th><th>Status</th><th></th></tr></thead>
+        <tbody id="usersBody"></tbody>
+      </table></div>
+    </div>
+  </section>
+</main>
+
+<script>
+'use strict';
+
+/* ---------- helpers ---------- */
+const $ = (id) => document.getElementById(id);
+
+/** Escape untrusted text before inserting into HTML.
+ *  Watchlist remarks and partner names are attacker-influenced free text —
+ *  they must never be interpolated raw. */
+function esc(v){
+  return String(v ?? '').replace(/[&<>"']/g, c => (
+    {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]
+  ));
+}
+const nf = (n) => Number(n ?? 0).toLocaleString();
+
+/* ---------- session ----------
+   The token lives in sessionStorage, not localStorage: screening output names
+   partners with a suspected sanctions nexus, so it should not outlive the tab
+   on a shared workstation. */
+const TOKEN_KEY = 'dh_screening_token';
+let SESSION = null;            // {email, role} once signed in
+let SINGLE_USER = false;       // no login required when true
+
+function getToken(){ try{ return sessionStorage.getItem(TOKEN_KEY); }catch(e){ return null; } }
+function setToken(t){
+  try{ t ? sessionStorage.setItem(TOKEN_KEY, t) : sessionStorage.removeItem(TOKEN_KEY); }catch(e){}
+}
+
+function showGate(message){
+  $('gate').classList.remove('hide');
+  $('btnSignOut').classList.add('hide');
+  if(message) banner($('liErr'),'err', esc(message));
+  setTimeout(()=>{ try{ $('liEmail').focus(); }catch(e){} }, 50);
+}
+function hideGate(){ $('gate').classList.add('hide'); }
+
+async function api(path, opts = {}){
+  const token = getToken();
+  if(token){
+    opts = Object.assign({}, opts);
+    opts.headers = Object.assign({}, opts.headers || {}, {Authorization: 'Bearer ' + token});
+  }
+  const res = await fetch(path, opts);
+  // A rejected token means the session is over — send them back to sign-in
+  // rather than leaving a half-broken page showing an error banner.
+  if(res.status === 401 && !SINGLE_USER){
+    setToken(null); SESSION = null;
+    showGate('Your session has expired. Please sign in again.');
+    throw new Error('Session expired');
+  }
+  if(!res.ok){
+    let detail = `Request failed (${res.status})`;
+    try{ const b = await res.json(); if(b && b.detail) detail = typeof b.detail === 'string' ? b.detail : JSON.stringify(b.detail); }catch(e){}
+    throw new Error(detail);
+  }
+  return res.status === 204 ? null : res.json();
+}
+
+function banner(el, kind, html){
+  el.innerHTML = html ? `<div class="banner ${kind}">${html}</div>` : '';
+}
+
+/* All displayed times are Berlin. Storage and the audit chain stay UTC —
+   local time shifts twice a year, so it cannot be the audit representation.
+   The exported report carries both, and the UTC column is authoritative. */
+const TZ = 'Europe/Berlin';
+function berlin(iso, withDate){
+  if(!iso) return '—';
+  const d = new Date(iso);
+  if(isNaN(d)) return '—';
+  const opts = withDate
+    ? {timeZone:TZ, year:'numeric', month:'2-digit', day:'2-digit',
+       hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false}
+    : {timeZone:TZ, hour:'2-digit', minute:'2-digit', hour12:false};
+  return new Intl.DateTimeFormat('en-GB', opts).format(d).replace(',', '');
+}
+function berlinLabel(){
+  // CET or CEST depending on the date — shown so the reader is never guessing.
+  try{
+    return new Intl.DateTimeFormat('en-GB',{timeZone:TZ,timeZoneName:'short'})
+      .formatToParts(new Date()).find(p=>p.type==='timeZoneName').value;
+  }catch(e){ return 'Berlin'; }
+}
+
+function ageText(iso){
+  if(!iso) return 'never refreshed';
+  const h = (Date.now() - new Date(iso).getTime())/3.6e6;
+  if(h < 1) return Math.round(h*60) + ' min ago';
+  if(h < 48) return Math.round(h) + ' h ago';
+  return Math.round(h/24) + ' days ago';
+}
+
+/* ---------- sign in / out ---------- */
+$('loginForm').onsubmit = async (e) => {
+  e.preventDefault();
+  const btn = $('liBtn');
+  btn.disabled = true; btn.textContent = 'Signing in…';
+  banner($('liErr'),'','');
+  try{
+    const body = new URLSearchParams({
+      username: $('liEmail').value.trim(), password: $('liPw').value });
+    const res = await fetch('/api/auth/login', {
+      method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body});
+    if(!res.ok){
+      let detail = 'Sign-in failed';
+      try{ const b = await res.json(); if(b && b.detail) detail = b.detail; }catch(_){}
+      throw new Error(detail);
+    }
+    const session = await res.json();
+    setToken(session.access_token);
+    SESSION = {email: session.email, role: session.role};
+    $('liPw').value = '';
+    hideGate();
+    await startApp();
+  }catch(err){
+    banner($('liErr'),'err', esc(err.message || 'Sign-in failed'));
+  }
+  btn.disabled = false; btn.textContent = 'Sign in';
+};
+
+$('btnSignOut').onclick = () => {
+  setToken(null); SESSION = null;
+  showGate('Signed out.');
+};
+
+function applySession(){
+  if(SINGLE_USER){
+    $('whoami').textContent = '';
+    $('btnSignOut').classList.add('hide');
+    $('tabUsers').classList.add('hide');
+    return;
+  }
+  $('whoami').innerHTML = esc(SESSION.email) +
+    ' <span class="rolechip">' + esc(SESSION.role) + '</span>';
+  $('btnSignOut').classList.remove('hide');
+  // Only an admin can manage accounts, so only an admin sees the tab. The
+  // server enforces it regardless; this just avoids offering a dead end.
+  $('tabUsers').classList.toggle('hide', SESSION.role !== 'admin');
+}
+
+/* ---------- user management ---------- */
+async function loadUsers(){
+  let rows;
+  try{ rows = await api('/api/users'); }
+  catch(e){ banner($('nuResult'),'err', esc(e.message)); return; }
+  $('usersBody').innerHTML = rows.map(u => `<tr>
+    <td>${esc(u.email)}</td>
+    <td>${esc(u.full_name || '—')}</td>
+    <td><span class="rolechip">${esc(u.role)}</span></td>
+    <td class="dim">${esc(u.region || '—')}</td>
+    <td>${u.is_active
+        ? '<span class="s-saved">active</span>'
+        : '<span class="dim">deactivated</span>'}</td>
+    <td>${u.is_active && SESSION && u.email !== SESSION.email
+        ? `<button data-off="${u.id}">Deactivate</button>` : ''}</td>
+  </tr>`).join('');
+  $('usersBody').querySelectorAll('button[data-off]').forEach(b => {
+    b.onclick = async () => {
+      if(!window.confirm('Deactivate this account? They will no longer be able to sign in. '
+        + 'Their past decisions stay in the audit trail.')) return;
+      try{
+        await api(`/api/users/${b.dataset.off}/deactivate`, {method:'POST'});
+        loadUsers();
+      }catch(e){ banner($('nuResult'),'err', esc(e.message)); }
+    };
+  });
+}
+
+$('btnAddUser').onclick = async () => {
+  const email = $('nuEmail').value.trim();
+  if(!email){ banner($('nuResult'),'warn','Enter an email address.'); return; }
+  // Generated here so a human never invents a weak one; shown once, never stored.
+  const bytes = new Uint8Array(12);
+  crypto.getRandomValues(bytes);
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+  const password = Array.from(bytes).map(b => alphabet[b % alphabet.length]).join('');
+
+  const btn = $('btnAddUser');
+  btn.disabled = true; btn.textContent = 'Creating…';
+  try{
+    await api('/api/users', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({email, password, role:$('nuRole').value,
+                            full_name:$('nuName').value.trim(), region:$('nuRegion').value.trim()})
+    });
+    banner($('nuResult'),'ok',
+      '<strong>Account created for ' + esc(email) + '</strong>' +
+      '<div style="margin-top:6px">Temporary password: <code class="mono" ' +
+      'style="font-size:14px;user-select:all">' + esc(password) + '</code></div>' +
+      '<div class="dim" style="margin-top:6px">Shown once — it is stored only as a hash and ' +
+      'cannot be recovered. Send it to them and have them change it.</div>');
+    $('nuEmail').value = ''; $('nuName').value = ''; $('nuRegion').value = '';
+    loadUsers();
+  }catch(e){
+    banner($('nuResult'),'err', esc(e.message));
+  }
+  btn.disabled = false; btn.textContent = 'Create account';
+};
+
+/* ---------- theme ----------
+   Three states, not two: "Auto" follows the operating system, which is the
+   right default for a tool people open at odd hours. The choice is remembered
+   per browser. */
+const THEMES = ['auto','dark','light'];
+const THEME_LABEL = {auto:'Theme: Auto', dark:'Theme: Dark', light:'Theme: Light'};
+function applyTheme(t){
+  const root = document.documentElement;
+  if(t === 'auto') root.removeAttribute('data-theme');
+  else root.setAttribute('data-theme', t);
+  localStorage.setItem('dh_theme', t);
+  const btn = $('themeBtn');
+  if(btn) btn.textContent = THEME_LABEL[t];
+}
+(function initTheme(){
+  const saved = localStorage.getItem('dh_theme');
+  applyTheme(THEMES.includes(saved) ? saved : 'auto');
+  $('themeBtn').onclick = () => {
+    const cur = localStorage.getItem('dh_theme') || 'auto';
+    applyTheme(THEMES[(THEMES.indexOf(cur) + 1) % THEMES.length]);
+  };
+})();
+
+/* ---------- tabs ---------- */
+document.querySelectorAll('nav.tabs button').forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll('nav.tabs button').forEach(b => b.classList.toggle('active', b === btn));
+    // 'users' was missing from this list, so opening it left the previous
+    // section on screen underneath it.
+    ['search','screening','resolution','watchlists','audit','users'].forEach(t =>
+      $('tab-'+t).classList.toggle('hide', t !== btn.dataset.tab));
+    if(btn.dataset.tab === 'audit'){ loadAudit(); loadRuns(); }
+    if(btn.dataset.tab === 'resolution'){ loadRuns(); if(selectedRun) pollRun(); }
+    if(btn.dataset.tab === 'users') loadUsers();
+  };
+});
+
+/* ---------- watchlists ---------- */
+let refreshInFlight = false;
+
+function tileHtml(s, staleHours, batchRunning){
+  const age = s.last_success_utc ? (Date.now() - new Date(s.last_success_utc).getTime())/3.6e6 : null;
+  // A source that has not started yet during an in-flight refresh is queued,
+  // not broken. Showing "never refreshed" in red mid-refresh reads as a failure.
+  const queued = batchRunning && s.last_attempt_status === 'never';
+
+  let cls = 'ok', when = ageText(s.last_success_utc);
+  if(s.last_attempt_status === 'running'){ cls = 'run'; when = 'fetching…'; }
+  else if(queued){ cls = 'run'; when = 'queued…'; }
+  else if(age === null) cls = 'err';
+  else if(age > staleHours) cls = 'warn';
+
+  return `<div class="tile">
+    <div class="nm"><span class="dot ${cls}"></span>${esc(s.source)}</div>
+    <div class="ct">${nf(s.record_count)}</div>
+    <div class="mt">${esc(when)}</div>
+    ${s.last_success_utc ? `<div class="mt" title="last successful refresh">${esc(berlin(s.last_success_utc, true))} ${esc(berlinLabel())}</div>` : ''}
+    ${s.payload_sha256 ? `<div class="mt" title="SHA-256 of the exact published file ingested">sha256 ${esc(s.payload_sha256.slice(0,16))}…</div>` : ''}
+    ${s.last_attempt_status === 'failed' ? `<div class="mt" style="color:var(--danger)">failed: ${esc((s.last_error||'').slice(0,140))}</div>` : ''}
+  </div>`;
+}
+
+async function loadWatchlists(){
+  try{
+    const d = await api('/api/watchlists/status');
+    const batchRunning = d.sources.some(s => s.last_attempt_status === 'running');
+    const html = d.sources.map(s => tileHtml(s, d.stale_threshold_hours, batchRunning)).join('');
+    $('wlTiles').innerHTML = html;
+    $('wlSummary').textContent =
+      `${nf(d.total_targets)} designated parties across ${d.sources.length} regulator feeds.`;
+
+    const running = d.sources.some(s => s.last_attempt_status === 'running');
+    if(running && !refreshInFlight){
+      banner($('startupNote'),'info','Refreshing watchlists in the background… counts update automatically.');
+    } else if(!running){
+      if(d.any_source_stale){
+        banner($('startupNote'),'warn',
+          `One or more lists have not refreshed successfully in the last ${d.stale_threshold_hours} hours. `+
+          `Screening against a stale list carries retroactive liability — refresh before running a batch.`);
+      } else {
+        banner($('startupNote'),'','');
+      }
+    }
+    $('btnRun').disabled = !$('file').files.length || d.total_targets === 0;
+    return d;
+  }catch(e){
+    banner($('globalError'),'err', esc(e.message));
+    return null;
+  }
+}
+
+async function refreshAll(){
+  refreshInFlight = true;
+  [$('btnRefreshAll2')].forEach(b => { if(b){ b.disabled = true; b.textContent = 'Refreshing…'; } });
+  banner($('startupNote'),'info','Refresh started. Fetching five regulator feeds — this can take a few minutes.');
+  try{
+    await api('/api/watchlists/refresh', {method:'POST'});
+  }catch(e){
+    banner($('startupNote'),'err', esc(e.message));
+  }
+  setTimeout(() => {
+    refreshInFlight = false;
+    [$('btnRefreshAll2')].forEach(b => { if(b){ b.disabled = false; b.textContent = 'Refresh all lists'; } });
+  }, 3000);
+}
+$('btnRefreshAll2').onclick = refreshAll;
+
+/* The shareable browser workbench cannot fetch the regulators itself: a page
+   may only read a cross-origin response if that host permits its origin, and
+   none of the four do (measured per redirect hop). This app is a server
+   process, so CORS never applies to it — it fetches daily and hands the result
+   over as a file. One click here, one drop there. */
+$('btnSnapshot').onclick = async () => {
+  const btn = $('btnSnapshot');
+  btn.disabled = true; btn.textContent = 'Preparing…';
+  try{
+    await downloadFile('/api/watchlists/snapshot.json',
+      `watchlist-snapshot-${new Date().toISOString().slice(0,10)}.json`);
+    banner($('startupNote'),'ok',
+      '<strong>Snapshot downloaded.</strong> Open the shared workbench, expand ' +
+      '<em>Update the watchlist</em>, and drop the file on it. The workbench records the ' +
+      'import in its audit trail with the file digest.');
+  }catch(e){
+    banner($('startupNote'),'err', esc(e.message));
+  }
+  btn.disabled = false; btn.textContent = 'Export snapshot for the workbench';
+};
+
+/* ---------- single-name search ---------- */
+$('qTh').oninput = (e) => $('qThVal').textContent = e.target.value + '%';
+
+function signalClass(v){
+  if(!v) return 'weak';
+  if(v.indexOf('match') >= 0 || v.indexOf('found on') >= 0) return 'strong';
+  if(v.indexOf('differs') >= 0 || v.indexOf('not found') >= 0) return 'geo';
+  return 'weak';
+}
+
+/* One "label: value" line of the published record. Rendered only when the
+   regulator actually published the field — an empty row is not shown at all,
+   so a blank can never be mistaken for an assertion. */
+function pubLine(label, value){
+  if(!value) return '';
+  return `<div class="pl"><span class="plk">${esc(label)}</span>${esc(String(value))}</div>`;
+}
+
+/* The comparison pills. Previously these read "DOB: not provided" whenever the
+   officer had searched without a date of birth — which looks like a statement
+   that the SANCTIONS RECORD has no date of birth. It is the opposite: the
+   record usually does. Where nothing was entered, say so once, plainly,
+   instead of printing three pills that each look like a finding. */
+function comparisonCell(h){
+  const rows = [
+    ['Date of birth', h.dob_signal],
+    ['Nationality',   h.nationality_signal],
+    ['Country',       h.country_signal],
+    ['Document no.',  h.id_signal]
+  ].filter(([,v]) => v);
+  const searched = rows.filter(([,v]) => v !== 'you searched without this');
+  if(!searched.length){
+    return `<div class="dim" style="font-size:11.5px;line-height:1.45">
+      Searched on <strong>name only</strong>.<br>Enter a date of birth,
+      nationality or document number above to corroborate this hit.</div>`;
+  }
+  return searched.map(([label, v]) =>
+    `<div style="margin-bottom:3px"><span class="badge ${signalClass(v)}">${esc(label)}: ${esc(v)}</span></div>`
+  ).join('');
+}
+
+/* Why the party is listed. The UK publishes a Statement of Reasons, the UN a
+   narrative summary; the EU and OFAC publish none, so for those the honest
+   answer is the role and the legal instrument, labelled as such rather than
+   dressed up as a reason the regulator gave. */
+function whyCell(h){
+  const bits = [];
+  if(h.listing_reason)
+    bits.push(`<div class="whyq">${esc(h.listing_reason)}</div>
+               <div class="whys">— published grounds, ${esc(h.source)}</div>`);
+  else if(h.position)
+    bits.push(`<div class="whyq">${esc(h.position)}</div>
+               <div class="whys">— role as published by ${esc(h.source)}. This source
+               states no narrative reason; the grounds are in the legal act.</div>`);
+  else
+    bits.push(`<div class="whys">${esc(h.source)} publishes no reason with this
+               record. The grounds are in the designating instrument
+               ${h.sanctions_program ? '(' + esc(h.sanctions_program) + ')' : ''}.</div>`);
+
+  const meta = [
+    h.listing_reason && h.position ? ['Role', h.position] : null,
+    h.linked_to ? ['Legal basis / linkage', h.linked_to] : null,
+    h.listed_on ? ['Listed on', h.listed_on] : null,
+    h.remarks ? ['Other information', h.remarks] : null
+  ].filter(Boolean);
+  if(meta.length)
+    bits.push('<div class="whym">' + meta.map(([k,v]) => pubLine(k, v)).join('') + '</div>');
+  return bits.join('');
+}
+
+async function runSearch(){
+  const name = $('qName').value.trim();
+  if(!name){ banner($('searchMeta'),'','' ); $('searchResult').innerHTML=''; return; }
+
+  const subject_types = Array.from(document.querySelectorAll('.qST:checked')).map(c=>c.value);
+  $('btnSearch').disabled = true; $('btnSearch').textContent = 'Searching…';
+  try{
+    const r = await api('/api/search', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        name,
+        threshold: Number($('qTh').value),
+        dob: $('qDob').value.trim(),
+        nationality: $('qNat').value.trim(),
+        country: $('qCountry').value.trim(),
+        national_id: $('qId').value.trim(),
+        subject_types
+      })
+    });
+
+    $('searchMeta').innerHTML =
+      `<span class="mono">${esc(r.query)}</span> normalised to <span class="mono">${esc(r.normalized_query)}</span> · ` +
+      `${nf(r.total_candidates)} candidates evaluated · <strong>${nf(r.hits.length)} at or above ${r.threshold}%</strong> · ${r.elapsed_ms} ms`;
+
+    if(!r.hits.length){
+      $('searchResult').innerHTML =
+        `<div class="banner ok" style="margin-top:12px"><strong>No match at ${r.threshold}%.</strong>
+         <div>Lower the fuzziness threshold to widen the search before concluding the name is clear.</div></div>`;
+      return;
+    }
+
+    $('searchResult').innerHTML = `<div class="tw" style="margin-top:12px"><table>
+      <thead><tr>
+        <th>Score</th><th>Designated party</th><th>Type</th><th>Source</th>
+        <th>Published record</th><th>Compared with your search</th>
+      </tr></thead>
+      <tbody>${r.hits.map((h,i)=>`<tr class="hitrow">
+        <td class="num">
+          <span class="badge ${bandClass(h.risk_band)}">${h.score.toFixed(0)}</span>
+          ${h.geo_adjustment!==0?`<div style="margin-top:4px"><span class="badge geo">geo ${h.geo_adjustment}</span></div>`:''}
+        </td>
+        <td>
+          <strong>${esc(h.target_name)}</strong>
+          <div class="dim">${esc(h.sanctions_program)}</div>
+          ${h.matched_name && h.matched_name !== h.target_name
+            ? `<div class="mal">matched on the alias &ldquo;${esc(h.matched_name)}&rdquo;</div>` : ''}
+          ${h.aliases?`<div class="dim" style="font-size:11.5px">aka ${esc(h.aliases.slice(0,150))}</div>`:''}
+          <div class="rc">${h.reason_codes.map(c=>`<span>${esc(c)}</span>`).join('')}</div>
+        </td>
+        <td><span class="badge weak">${esc(h.subject_type)}</span></td>
+        <td>${esc(h.source)}<div class="dim mono">${esc(h.watchlist_id)}</div></td>
+        <td class="pub">
+          ${pubLine('Date of birth', h.dob)}
+          ${pubLine('Nationality', h.nationality)}
+          ${pubLine('Place of birth', h.place_of_birth)}
+          ${pubLine('Gender', h.gender)}
+          ${pubLine('Address country', h.geography)}
+          ${pubLine('Documents', h.identifiers)}
+          ${(!h.dob && !h.nationality && !h.place_of_birth && !h.gender && !h.geography && !h.identifiers)
+            ? '<div class="dim" style="font-size:11.5px">This designation carries no identity detail beyond the name.</div>' : ''}
+        </td>
+        <td style="min-width:200px">${comparisonCell(h)}</td>
+      </tr>
+      <tr class="whyrow"><td></td><td colspan="5">
+        <div class="whyh">Why this party is listed</div>${whyCell(h)}
+      </td></tr>`).join('')}</tbody></table></div>`;
+  }catch(e){
+    banner($('searchMeta'),'err', esc(e.message));
+    $('searchResult').innerHTML = '';
+  }
+  $('btnSearch').disabled = false; $('btnSearch').textContent = 'Search';
+}
+
+$('btnSearch').onclick = runSearch;
+$('qName').onkeydown = (e) => { if(e.key === 'Enter') runSearch(); };
+['qDob','qNat','qCountry','qId'].forEach(id => {
+  $(id).onkeydown = (e) => { if(e.key === 'Enter') runSearch(); };
+});
+// Re-run on control changes so the officer can tune fuzziness and see it move.
+$('qTh').onchange = () => { if($('qName').value.trim()) runSearch(); };
+/* Identity fields follow the subject type, as a screening terminal does.
+   An organisation has a country of REGISTRATION and no nationality or date of
+   birth; a person has a nationality and a country they are LOCATED in. Showing
+   every field for every subject type let a registration country be typed into
+   the control the engine compares against a person's nationality. */
+function syncIdentityFields(){
+  const on = Array.from(document.querySelectorAll('.qST:checked')).map(c => c.value);
+  const person = on.includes('Individual') || on.length === 0;
+  const orgOnly = !person && (on.includes('Entity') || on.includes('Vessel') || on.includes('Aircraft'));
+
+  show($('fldDob'), person);
+  show($('fldNat'), person);
+  $('lblCountry').textContent = orgOnly ? 'Country of registration' : 'Country location';
+  $('lblId').textContent = orgOnly ? 'Registration / tax ID' : 'National / passport ID';
+  $('qId').placeholder = orgOnly ? 'Company or tax no.' : 'ID or passport no.';
+
+  // Clear what is no longer on screen, so a hidden value cannot silently
+  // influence a later search.
+  if(!person){ $('qDob').value = ''; $('qNat').value = ''; }
+}
+function show(el, visible){ if(el) el.classList.toggle('hide', !visible); }
+
+document.querySelectorAll('.qST').forEach(c => {
+  c.onchange = () => {
+    syncIdentityFields();
+    if($('qName').value.trim()) runSearch();
+  };
+});
+syncIdentityFields();
+
+/* Filled from the engine's own country table, so the form can never offer a
+   country the matcher would then fail to resolve.
+   Runs at load. It was previously spliced INSIDE the checkbox handler above,
+   so the list stayed empty until a subject type was toggled — which is why the
+   picker appeared broken in the default state, the one everybody starts in. */
+/* Groups and brands come from the engine's own lists, so a form cannot offer
+   a value the API would quietly drop on the floor. */
+let TAXONOMY = {groups: [], brands: []};
+function fillSelect(el, values, blank){
+  if(!el) return;
+  el.innerHTML = `<option value="">${esc(blank)}</option>`
+    + values.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
+}
+(async function loadTaxonomy(){
+  try{
+    TAXONOMY = await api('/api/runs/taxonomy');
+  }catch(e){ return; }
+  fillSelect($('qGroup'), TAXONOMY.groups, 'Not stated');
+  fillSelect($('qBrand'), TAXONOMY.brands, 'Not stated');
+  fillSelect($('bGroup'), TAXONOMY.groups, 'Not stated');
+  fillSelect($('bBrand'), TAXONOMY.brands, 'Not stated');
+  fillSelect($('fGroup'), TAXONOMY.groups, 'All counterparty types');
+  fillSelect($('fBrand'), TAXONOMY.brands, 'All brands');
+})();
+
+(async function loadCountries(){
+  try{
+    const list = await api('/api/watchlists/countries');
+    $('countryList').innerHTML = list.map(c => `<option value="${esc(c.name)}"></option>`).join('');
+  }catch(e){ /* free text still works; the field is not blocked by this */ }
+})();
+syncIdentityFields();
+
+/* ---------- promote a search into an adjudicable case ---------- */
+$('btnCase').onclick = async () => {
+  const name = $('qName').value.trim();
+  if(!name){ banner($('caseResult'),'warn','Enter a name to screen first.'); return; }
+  const btn = $('btnCase');
+  btn.disabled = true; btn.textContent = 'Creating…';
+  banner($('caseResult'),'','');
+  try{
+    const r = await api('/api/search/case', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        name,
+        threshold: Number($('qTh').value),
+        dob: $('qDob').value.trim(),
+        nationality: $('qNat').value.trim(),
+        country: $('qCountry').value.trim(),
+        national_id: $('qId').value.trim(),
+        subject_types: Array.from(document.querySelectorAll('.qST:checked')).map(c=>c.value),
+        subject_reference: $('qRef').value.trim(),
+        counterparty_group: $('qGroup').value,
+        brand: $('qBrand').value,
+        note: $('qNote').value.trim()
+      })
+    });
+    banner($('caseResult'), r.cleared_with_no_match ? 'ok' : 'info',
+      (r.cleared_with_no_match
+        ? `<strong>Case created — no designation matched.</strong>
+           <div>Recorded that <b>${esc(name)}</b> was screened against the full
+           watchlist with no match at ${$('qTh').value}%. Download the due
+           diligence record to evidence it.</div>`
+        : `<strong>Case created with ${r.alerts} alert${r.alerts===1?'':'s'}.</strong>
+           <div>Open it to record the decision, state the grounds and attach
+           documents.</div>`) +
+      `<div style="margin-top:8px">
+         <button id="btnCaseOpen">Open case</button>
+         <button id="btnCaseDossier">Download due diligence record (PDF)</button>
+       </div>`);
+
+    $('btnCaseDossier').onclick = () => downloadFile(
+      `/api/runs/${r.run_ref}/due-diligence-record.pdf`,
+      `DH_Due_Diligence_${name.replace(/[^A-Za-z0-9]+/g,'_').slice(0,40)}.pdf`);
+    $('btnCaseOpen').onclick = () => {
+      selectedRun = r.run_ref;
+      offset = 0;
+      document.querySelector('nav.tabs button[data-tab="resolution"]').click();
+      loadRuns().then(() => pollRun());
+    };
+  }catch(e){
+    banner($('caseResult'),'err', esc(e.message));
+  }
+  btn.disabled = false; btn.textContent = 'Create case for review';
+};
+
+/* ---------- upload ---------- */
+const drop = $('drop'), fileInput = $('file');
+drop.onclick = () => fileInput.click();
+drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('on'); };
+drop.ondragleave = () => drop.classList.remove('on');
+drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove('on'); pick(e.dataTransfer.files[0]); };
+fileInput.onchange = () => pick(fileInput.files[0]);
+
+function pick(f){
+  if(!f) return;
+  if(/\.xls$/i.test(f.name)){
+    banner($('uploadError'),'err',
+      'Legacy .xls is not supported. Open it in Excel and use Save As &rarr; Excel Workbook (.xlsx).');
+    return;
+  }
+  if(!/\.(csv|txt|xlsx|xlsm)$/i.test(f.name)){
+    banner($('uploadError'),'err','Please choose an Excel (.xlsx) or CSV file.');
+    return;
+  }
+  banner($('uploadError'),'','');
+  const dt = new DataTransfer(); dt.items.add(f); fileInput.files = dt.files;
+  $('dropName').textContent = f.name;
+  $('dropHint').textContent = (f.size/1048576).toFixed(1) + ' MB — click to choose a different file';
+  $('btnRun').disabled = false;
+}
+
+$('th').oninput = (e) => $('thVal').textContent = e.target.value + '%';
+$('geo').oninput = (e) => $('geoVal').textContent = '−' + e.target.value;
+
+$('btnRun').onclick = async () => {
+  const f = fileInput.files[0];
+  if(!f) return;
+  $('btnRun').disabled = true; $('btnRun').textContent = 'Uploading…';
+  banner($('uploadError'),'','');
+  try{
+    const fd = new FormData();
+    fd.append('file', f);
+    fd.append('threshold', $('th').value);
+    fd.append('geo_penalty', $('geo').value);
+    // No subject-type picker: the uploaded file already states what each row
+    // is, in its own Type column, and the engine reads it. Asking again — and
+    // applying the answer to every row — could only contradict the file.
+    fd.append('subject_types', '');
+    fd.append('counterparty_group', $('bGroup').value);
+    fd.append('brand', $('bBrand').value);
+    const run = await api('/api/runs', {method:'POST', body: fd});
+    selectedRun = run.run_ref;
+    await loadRuns();
+    pollRun();
+  }catch(e){
+    banner($('uploadError'),'err', esc(e.message));
+  }
+  $('btnRun').textContent = 'Run screening'; $('btnRun').disabled = false;
+};
+
+/* ---------- runs ---------- */
+let selectedRun = null;
+let runs = [];
+
+async function loadRuns(){
+  const q = new URLSearchParams();
+  if($('fGroup') && $('fGroup').value) q.set('counterparty_group', $('fGroup').value);
+  if($('fBrand') && $('fBrand').value) q.set('brand', $('fBrand').value);
+  try{
+    runs = await api('/api/runs' + (q.toString() ? '?' + q : ''));
+  }catch(e){ return; }
+  if($('caseCount')) $('caseCount').textContent =
+    `${nf(runs.length)} case${runs.length === 1 ? '' : 's'}`;
+
+  $('runsCard').classList.toggle('hide', runs.length === 0);
+
+  // The same list serves two purposes: a record of what was screened (audit
+  // trail) and a worklist of what still needs resolving (case resolution).
+  const rowsHtml = runs.map(r => `<tr>
+    <td class="mono">${esc(berlin(r.started_at, true))}</td>
+    <td>${esc(r.uploaded_filename)}${r.origin === 'search'
+        ? ' <span class="badge weak">manual</span>' : ''}</td>
+    <td>${esc(r.status)}</td>
+    <td class="num">${nf(r.total_rows)}</td>
+    <td class="num">${nf(r.total_matches)}</td>
+    <td><button data-run="${esc(r.run_ref)}">${selectedRun===r.run_ref?'Viewing':'Open'}</button></td>
+  </tr>`).join('');
+  const caseRows = runs.map(r => `<tr>
+    <td class="mono">${esc(berlin(r.started_at, true))}</td>
+    <td>${esc(r.uploaded_filename)}${r.origin === 'search'
+        ? ' <span class="badge weak">manual</span>' : ''}</td>
+    <td class="dim">${esc(r.counterparty_group || '—')}</td>
+    <td class="dim">${esc(r.brand || '—')}</td>
+    <td>${esc(r.status)}</td>
+    <td class="num">${nf(r.total_matches)}</td>
+    <td class="row" style="gap:6px;justify-content:flex-end">
+      <button data-run="${esc(r.run_ref)}">${selectedRun===r.run_ref?'Viewing':'Open'}</button>
+      <button data-del="${esc(r.run_ref)}" title="Remove this case from the worklist">Delete</button>
+    </td>
+  </tr>`).join('');
+
+  $('runsBody').innerHTML = rowsHtml;
+  if($('casesBody')) $('casesBody').innerHTML = caseRows;
+
+  document.querySelectorAll('#casesBody button[data-del]').forEach(b => {
+    b.onclick = async () => {
+      const ref = b.dataset.del;
+      const row = runs.find(r => r.run_ref === ref) || {};
+      // Name what is about to go, including resolved work, rather than asking
+      // "are you sure?" about an unnamed thing.
+      if(!window.confirm(
+        `Delete "${row.uploaded_filename || ref}"?
+
+` +
+        `${nf(row.total_matches || 0)} alert(s) will be removed from the worklist.
+` +
+        `The deletion is written to the audit trail; the screening stays on the record.`
+      )) return;
+      b.disabled = true; b.textContent = 'Deleting…';
+      try{
+        await api('/api/runs/' + encodeURIComponent(ref), {method:'DELETE'});
+        if(selectedRun === ref){ selectedRun = null; $('runDetail').innerHTML = ''; }
+        await loadRuns();
+      }catch(e){
+        b.disabled = false; b.textContent = 'Delete';
+        banner($('globalError'),'err','Could not delete: ' + esc(e.message));
+      }
+    };
+  });
+
+  document.querySelectorAll('#runsBody button[data-run], #casesBody button[data-run]')
+    .forEach(b => {
+      b.onclick = () => {
+        selectedRun = b.dataset.run; offset = 0;
+        // Opening a case from the audit trail should take you to where the
+        // work happens, not render it underneath the chain.
+        document.querySelector('nav.tabs button[data-tab="resolution"]').click();
+        loadRuns(); pollRun();
+      };
+    });
+
+  if(!selectedRun && runs.length) selectedRun = runs[0].run_ref;
+}
+
+let pollTimer = null;
+async function pollRun(){
+  if(pollTimer) clearTimeout(pollTimer);
+  if(!selectedRun) return;
+  let run;
+  try{ run = await api('/api/runs/'+selectedRun); }catch(e){ return; }
+
+  if(run.status === 'queued' || run.status === 'running'){
+    $('runDetail').innerHTML = `<div class="card">
+      <h2>Screening in progress</h2>
+      <p class="sub">${esc(run.uploaded_filename)} — ${nf(run.distinct_names)} distinct names indexed from ${nf(run.total_rows)} rows.</p>
+      <div class="bar"><div style="width:${run.progress}%"></div></div>
+      <p class="dim" style="margin-top:8px">${run.progress.toFixed(1)}% complete</p>
+    </div>`;
+    pollTimer = setTimeout(pollRun, 2000);
+    return;
+  }
+  if(run.status === 'failed'){
+    $('runDetail').innerHTML = `<div class="card"><h2>Screening failed</h2>
+      <div class="banner err">${esc(run.error || 'Unknown error')}</div></div>`;
+    loadRuns();
+    return;
+  }
+  renderRun(run);
+  loadRuns();
+}
+
+/* ---------- results + adjudication ---------- */
+let offset = 0;
+const LIMIT = 100;
+/* Resolution statuses, in the shape a screening terminal presents them: a
+   status carries its own risk level rather than offering the two separately,
+   which would permit meaningless pairs like "False / High".
+   The stored values are unchanged so existing records, the CSV and the PDF
+   stay readable; only the labels follow the house vocabulary. */
+/* The resolution matrix, fetched from the engine so the screen and the
+   validator can never disagree about which risk levels a status may carry. */
+let STATUSES = [];
+function statusOf(v){ return STATUSES.find(x => x.value === (v || '')) || null; }
+function statusLabel(v){ const st = statusOf(v); return st ? st.label : 'Unspecified'; }
+
+/* Server validation messages are written for an API caller and read as noise
+   in a form. Keep the instruction, drop the essay. */
+function shortError(msg){
+  const m = String(msg || '');
+  if(/reason code|grounds/i.test(m)) return 'Select a reason first.';
+  if(/rationale/i.test(m)) return 'This reason needs a rationale.';
+  return m.length > 90 ? m.slice(0, 90) + '…' : m;
+}
+
+/* How the uploaded file was read. Shown so the officer can confirm the engine
+   picked the right column before trusting a single alert. */
+
+/* Collapse the alerts that already have an answer. */
+function applyHideResolved(){
+  const hide = $('chkHideResolved');
+  const body = $('mBody');
+  if(!body) return;
+  let resolved = 0, total = 0;
+  body.querySelectorAll('tr[data-id]').forEach(tr => {
+    total++;
+    const isResolved = tr.classList.contains('resolved');
+    if(isResolved) resolved++;
+    const panel = body.querySelector(`tr[data-detail="${tr.dataset.id}"]`);
+    const put_away = isResolved && hide && hide.checked;
+    tr.classList.toggle('hide', put_away);
+    // Hide its open panel too, or the detail floats under an absent row.
+    if(panel && put_away) panel.classList.add('hide');
+  });
+  const label = $('resolvedCount');
+  if(label){
+    label.textContent = total
+      ? `${nf(resolved)} of ${nf(total)} resolved · ${nf(total - resolved)} outstanding`
+      : '';
+  }
+}
+
+function bandClass(b){
+  if(!b) return 'weak';
+  if(b.indexOf('Strong') === 0) return 'strong';
+  if(b.indexOf('Potential') === 0) return 'potential';
+  return 'weak';
+}
+
+async function renderRun(run){
+  // The rows are built from STATUSES — the status dropdown's options and the
+  // reason label both come from it. It used to be fetched lazily, only when a
+  // panel was opened, so the first render produced a select with NO options
+  // (an empty Status cell on an alert that was plainly resolved) and a reason
+  // that fell back to "Unknown" beside a correctly-saved "High risk". The data
+  // was right; the screen said otherwise, which is the worse failure.
+  await loadReasons();
+
+  const q = new URLSearchParams({limit: LIMIT, offset});
+
+  let page;
+  try{ page = await api(`/api/runs/${run.run_ref}/matches?${q}`); }
+  catch(e){ banner($('globalError'),'err', esc(e.message)); return; }
+
+  const rows = page.items.map(m => `<tr data-id="${m.id}" class="${m.decided_at ? 'resolved' : ''}">
+    <td class="num">
+      <span class="badge ${bandClass(m.risk_band)}">${m.score.toFixed(0)}</span>
+      ${m.geo_adjustment !== 0 ? `<div style="margin-top:4px"><span class="badge geo" title="De-prioritised: partner country contradicts the designation">geo ${m.geo_adjustment}</span></div>` : ''}
+    </td>
+    <td>
+      <strong>${esc(m.partner_legal_name || m.ubo_name)}</strong>
+      <div class="dim mono">${esc(m.grid)} · ${esc(m.account_country || 'country unknown')} · ${esc(m.region)}</div>
+      ${m.screened_field === 'UBO' ? '<div class="dim">matched on UBO</div>' : ''}
+    </td>
+    <td>
+      <strong>${esc(m.target_name)}</strong>
+      <div class="dim">${esc(m.sanctions_program)}</div>
+      <div class="rc">${(m.reason_codes||'').split(',').filter(Boolean).map(c=>`<span>${esc(c)}</span>`).join('')}</div>
+    </td>
+    <td><span class="badge weak">${esc(m.subject_type||'Unknown')}</span></td>
+    <td>${esc(m.source)}<div class="dim mono">${esc(m.watchlist_id)}</div></td>
+    <td class="dim">${esc(m.geography || '—')}</td>
+    <td>
+      <select data-f="decision">${STATUSES.map(st=>`<option value="${esc(st.value)}"${st.value===m.decision?' selected':''}>${esc(st.label)}</option>`).join('')}</select>
+      ${m.decided_by ? `<div class="dim mono" style="margin-top:4px">${esc(m.decided_by)}</div>` : ''}
+    </td>
+    <td>${m.decided_at
+        ? `<span class="clip">${esc(reasonText(m.decision))}</span>`
+          + `<div class="dim" style="font-size:11.5px">${esc(m.risk_level || '—')} risk</div>`
+        : '<span class="dim" style="font-size:11.5px">—</span>'}</td>
+    <td class="st">${m.decided_at
+        ? '<span class="s-saved">saved</span><div class="dim">'+esc(berlin(m.decided_at))+'</div>'
+        : '<span class="dim">—</span>'}</td>
+    <td><button class="expand" data-x="${m.id}">Review</button></td>
+  </tr>
+  <tr class="detail hide" data-detail="${m.id}"><td colspan="10"></td></tr>`).join('');
+
+  $('runDetail').innerHTML = `<div class="card">
+    <div class="row between">
+      <div>
+        <h2>${esc(run.uploaded_filename)}</h2>
+        <p class="sub" style="margin:0">
+          ${nf(run.total_matches)} alerts from ${nf(run.total_rows)} rows
+          (${nf(run.distinct_names)} distinct names) · threshold ${run.threshold}% ·
+          run <span class="mono">${esc(run.run_ref.slice(0,8))}</span>
+        </p>
+      </div>
+      <div class="row" style="gap:8px">
+        <button class="primary" id="btnDossier">Due diligence record (PDF)</button>
+        <button id="btnReport">Adjudication report (CSV)</button>
+      </div>
+    </div>
+
+    ${page.items.length ? `<div class="savebar" id="savebar">
+      <button class="primary" id="btnSave" disabled>Save</button>
+      <span id="saveState" class="dim">All changes saved.</span>
+      <span class="spacer"></span>
+      <!-- Hidden, never deleted: the alert stays in the case, the report and
+           the audit trail. This only clears the desk so what is left is what
+           still needs an answer. -->
+      <label class="dim" style="font-size:12.5px;display:flex;align-items:center;gap:6px">
+        <input type="checkbox" id="chkHideResolved" style="width:auto" /> Hide resolved
+      </label>
+      <span class="dim" id="resolvedCount" style="font-size:12px"></span>
+    </div>
+    <div class="tw"><table>
+      <thead><tr><th>Score</th><th>Partner</th><th>Designated target</th><th>Type</th><th>Source</th><th>Geography</th><th>Status</th><th>Reason</th><th>Saved</th><th></th></tr></thead>
+      <tbody id="mBody">${rows}</tbody>
+    </table></div>
+    <div class="row between" style="margin-top:12px">
+      <button id="pPrev" ${offset===0?'disabled':''}>Previous</button>
+      <span class="dim">${nf(offset+1)}–${nf(Math.min(offset+LIMIT, page.total))} of ${nf(page.total)}</span>
+      <button id="pNext" ${offset+LIMIT>=page.total?'disabled':''}>Next</button>
+    </div>` : '<div class="empty">No alerts in this case.</div>'}
+  </div>`;
+
+  $('btnReport').onclick = () => downloadReport(run.run_ref);
+  $('btnDossier').onclick = () => downloadFile(
+    `/api/runs/${run.run_ref}/due-diligence-record.pdf`,
+    `DH_Due_Diligence_Record_${run.run_ref.slice(0,8)}.pdf`);
+  if($('pPrev')) $('pPrev').onclick = () => { offset = Math.max(0, offset-LIMIT); renderRun(run); };
+  if($('pNext')) $('pNext').onclick = () => { offset += LIMIT; renderRun(run); };
+
+  wireAdjudication(run.run_ref, page.items);
+
+  // Preference survives a reload: an officer working a long queue should not
+  // have to re-hide the same forty resolved alerts each time they come back.
+  const hide = $('chkHideResolved');
+  if(hide){
+    try{ hide.checked = localStorage.getItem('dh_hide_resolved') === '1'; }catch(e){}
+    hide.onchange = () => {
+      try{ localStorage.setItem('dh_hide_resolved', hide.checked ? '1' : '0'); }catch(e){}
+      applyHideResolved();
+    };
+  }
+  applyHideResolved();
+}
+
+/* ---------- reason catalogue ---------- */
+async function loadReasons(){
+  if(STATUSES.length) return STATUSES;
+  try{ STATUSES = await api('/api/runs/reasons/catalogue'); }catch(e){ STATUSES = []; }
+  return STATUSES;
+}
+/* Risk level is the officer's judgement and is selected, not implied. Which
+   levels are offered depends on the status: a match that is FALSE carries no
+   risk to grade, so it takes Unknown or N/A rather than a Low that would sit
+   in a report beside genuine low-risk positives and be counted with them. */
+function riskOptions(decision, selected){
+  const st = statusOf(decision);
+  const risks = st ? st.risks : ['Unknown','N/A'];
+  const chosen = risks.includes(selected) ? selected : (st ? st.default_risk : 'Unknown');
+  return risks.map(r =>
+    `<option value="${esc(r)}"${r===chosen?' selected':''}>${esc(r)}</option>`).join('');
+}
+
+/* The reason restates the match quality, so it is filled in from the status
+   rather than being a second thing to choose. Shown, not editable — an officer
+   who could set "Positive / No match" would be recording a contradiction. */
+function reasonText(decision){
+  const st = statusOf(decision);
+  return st ? st.reason_label : 'Unknown';
+}
+
+/* ---------- the per-alert resolution panel ----------
+   Status, reason and rationale. The table row above is a summary; this is
+   where the alert is actually resolved, because a defensible dismissal needs
+   more room than a table cell. */
+function renderPanel(runRef, m){
+  const cell = document.querySelector(`tr[data-detail="${m.id}"] > td`);
+  if(!cell) return;
+  cell.innerHTML = `<div class="adj">
+    <div>
+      <h4>Resolution</h4>
+      <table class="rmx"><thead><tr><th>Status</th><th>Risk level</th></tr></thead>
+        <tbody>${STATUSES.map(st => `
+          <tr data-status="${esc(st.value)}" class="${st.value===(m.decision||'')?'on':''}">
+            <td>${esc(st.label)}</td>
+            <td class="rl">${esc(st.value===(m.decision||'') ? (m.risk_level || st.default_risk) : st.default_risk)}</td>
+          </tr>`).join('')}
+        </tbody></table>
+      <input type="hidden" data-p="decision" value="${esc(m.decision||'')}" />
+      <div class="row" style="margin-top:10px;gap:14px;align-items:flex-end">
+        <div style="width:150px">
+          <label class="dim" style="font-size:12px">Risk level</label>
+          <select data-p="risk_level">${riskOptions(m.decision, m.risk_level)}</select>
+        </div>
+        <div>
+          <label class="dim" style="font-size:12px">Reason</label>
+          <div class="reasonval" data-p="reason">${esc(reasonText(m.decision))}</div>
+        </div>
+      </div>
+    </div>
+    <div>
+      <h4>Rationale — what you checked and concluded</h4>
+      <textarea data-p="comment" rows="7" placeholder="e.g. Verified trade licence 00123; incorporated 2019; UBO differs from designated party.">${esc(m.comment)}</textarea>
+      <div class="row" style="margin-top:10px">
+        <button class="primary" data-p="panelsave">Resolve</button>
+        <span class="dim" data-p="panelstate"></span>
+      </div>
+    </div>
+  </div>`;
+
+  const q = (k) => cell.querySelector(`[data-p="${k}"]`);
+  const read = () => ({
+    decision: q('decision').value,
+    risk_level: q('risk_level').value,
+    comment: q('comment').value
+  });
+
+  // Pick a status by clicking its row, the way a screening terminal works.
+  // The risk level is then graded separately, but only among the levels that
+  // status may carry — so "False / High" cannot be recorded, while a Positive
+  // match can still be graded Medium rather than forced to High.
+  cell.querySelectorAll('.rmx tbody tr').forEach((tr) => {
+    tr.onclick = () => {
+      cell.querySelectorAll('.rmx tbody tr').forEach(r => r.classList.remove('on'));
+      tr.classList.add('on');
+      const status = tr.dataset.status;
+      q('decision').value = status;
+      // Offer only the risk levels this status may carry, and restate the
+      // reason. Both follow the status so the two can never contradict it.
+      q('risk_level').innerHTML = riskOptions(status, q('risk_level').value);
+      q('reason').textContent = reasonText(status);
+      tr.querySelector('.rl').textContent = q('risk_level').value;
+    };
+  });
+  q('risk_level').onchange = () => {
+    const on = cell.querySelector('.rmx tbody tr.on .rl');
+    if(on) on.textContent = q('risk_level').value;
+  };
+
+  q('panelsave').onclick = async () => {
+    const btn = q('panelsave');
+    btn.disabled = true; btn.textContent = 'Saving…';
+    q('panelstate').textContent = '';
+    try{
+      await api(`/api/runs/${runRef}/matches/${m.id}`, {
+        method:'PATCH', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(read())
+      });
+      dirty.delete(String(m.id));
+      setRowState(String(m.id), 'saved');
+      refreshSaveBar();
+      q('panelstate').textContent = 'Resolved.';
+      // Repaint the summary row. It previously kept the values it was drawn
+      // with, so after resolving in the panel the Status cell sat empty and
+      // the Reason column stayed blank — the work looked like it had not
+      // been recorded, on the one screen where that matters.
+      const saved = read();
+      const row = document.querySelector(`tr[data-id="${m.id}"]`);
+      if(row){
+        const sel = row.querySelector('[data-f=decision]');
+        if(sel) sel.value = saved.decision;
+        const cells = row.querySelectorAll('td');
+        if(cells.length >= 8){
+          cells[7].innerHTML = `<span class="clip">${esc(reasonText(saved.decision))}</span>`
+            + `<div class="dim" style="font-size:11.5px">${esc(saved.risk_level)} risk</div>`;
+        }
+      }
+      if(row) row.classList.add('resolved');
+      Object.assign(m, saved, {decided_at: new Date().toISOString()});
+      panelCache.set(String(m.id), m);
+      // Put the panel away and re-apply the filter, so resolving the last
+      // outstanding alert visibly empties the queue.
+      const detail = document.querySelector(`tr[data-detail="${m.id}"]`);
+      if(detail) detail.classList.add('hide');
+      applyHideResolved();
+    }catch(e){
+      // The server refusing is the control working: no reason, no resolution.
+      q('panelstate').textContent = shortError(e.message);
+    }
+    btn.disabled = false; btn.textContent = 'Resolve';
+  };
+}
+
+let panelCache = new Map();
+async function openPanel(runRef, matchId, force){
+  const row = document.querySelector(`tr[data-detail="${matchId}"]`);
+  if(!row) return;
+  if(!force && !row.classList.contains('hide')){ row.classList.add('hide'); return; }
+  row.classList.remove('hide');
+  await loadReasons();
+  const m = panelCache.get(String(matchId));
+  if(m) renderPanel(runRef, m);
+}
+
+/* ---------- adjudication: explicit, visible save state ----------
+   Decisions and notes are the compliance record. Autosaving silently is not
+   enough — the officer has to be able to SEE that an edit persisted, and to
+   force a save without hunting for the right place to click. */
+let dirty = new Map();   // matchId -> {decision, risk_level, comment}
+let rowEls = new Map();  // matchId -> <tr>
+
+function setRowState(id, state, note){
+  const tr = rowEls.get(id);
+  if(!tr) return;
+  tr.classList.toggle('row-dirty', state === 'dirty');
+  tr.classList.toggle('row-saved', state === 'saved');
+  const cell = tr.querySelector('td.st');
+  if(!cell) return;
+  if(state === 'dirty')  cell.innerHTML = '<span class="s-dirty">unsaved</span>';
+  if(state === 'saving') cell.innerHTML = '<span class="s-saving">saving…</span>';
+  if(state === 'saved')  cell.innerHTML = '<span class="s-saved">saved</span>' +
+    '<div class="dim">' + berlin(new Date().toISOString()) + '</div>';
+  if(state === 'error')  cell.innerHTML = '<span class="s-error">failed</span>' +
+    (note ? '<div class="dim">'+esc(note)+'</div>' : '');
+}
+
+function refreshSaveBar(){
+  const bar = $('savebar'), btn = $('btnSave'), label = $('saveState');
+  if(!bar) return;
+  const n = dirty.size;
+  bar.classList.toggle('dirty', n > 0);
+  btn.disabled = n === 0;
+  label.textContent = n === 0
+    ? 'All changes saved.'
+    : n + (n === 1 ? ' unsaved change' : ' unsaved changes');
+  label.className = n === 0 ? 'dim' : 's-dirty';
+}
+
+function wireAdjudication(runRef, items){
+  dirty = new Map();
+  rowEls = new Map();
+  panelCache = new Map();
+  (items || []).forEach(m => panelCache.set(String(m.id), m));
+  const body = $('mBody');
+  if(!body) return;
+
+  body.querySelectorAll('.expand').forEach(el => {
+    el.onclick = () => openPanel(runRef, el.dataset.x);
+  });
+
+  body.querySelectorAll('tr[data-id]').forEach(tr => {
+    const id = tr.dataset.id;
+    rowEls.set(id, tr);
+    const sel = tr.querySelector('[data-f=decision]');
+    if(!sel) return;
+
+    sel.onchange = () => {
+      const cached = panelCache.get(id) || {};
+      const st = statusOf(sel.value);
+      const payload = {
+        decision: sel.value,
+        // Changing status from the row applies that status's default grading;
+        // opening the panel is how a different level gets chosen.
+        risk_level: st ? st.default_risk : '',
+        comment: cached.comment || ''
+      };
+      dirty.set(id, payload);
+      setRowState(id, 'dirty');
+      refreshSaveBar();
+      // A decision needs grounds. Try the save; if the server refuses, open the
+      // review panel so the officer can supply them rather than guessing.
+      saveOne(runRef, id).then(ok => { if(!ok) openPanel(runRef, id, true); });
+    };
+  });
+
+  const btn = $('btnSave');
+  if(btn) btn.onclick = () => saveAll(runRef);
+  refreshSaveBar();
+}
+
+async function saveOne(runRef, id){
+  const payload = dirty.get(id);
+  if(!payload) return true;
+  setRowState(id, 'saving');
+  try{
+    await api(`/api/runs/${runRef}/matches/${id}`, {
+      method:'PATCH',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(payload)
+    });
+    dirty.delete(id);
+    setRowState(id, 'saved');
+    const savedRow = rowEls.get(id) || document.querySelector(`tr[data-id="${id}"]`);
+    if(savedRow) savedRow.classList.add('resolved');
+    applyHideResolved();
+    refreshSaveBar();
+    return true;
+  }catch(e){
+    setRowState(id, 'error', e.message.slice(0,60));
+    banner($('globalError'),'err','Could not save: '+esc(e.message)+' — your text is still on screen; press Save to retry.');
+    refreshSaveBar();
+    return false;
+  }
+}
+
+async function saveAll(runRef){
+  const btn = $('btnSave');
+  btn.disabled = true; btn.textContent = 'Saving…';
+  // Re-read the focused field first: the officer may click Save mid-typing.
+  const active = document.activeElement;
+  if(active && active.tagName === 'TEXTAREA'){ active.blur(); }
+  let failed = 0;
+  for(const id of Array.from(dirty.keys())){
+    if(!await saveOne(runRef, id)) failed++;
+  }
+  btn.textContent = 'Save';
+  refreshSaveBar();
+  if(!failed) banner($('globalError'),'','');
+}
+
+// Last line of defence: never let an officer lose an adjudication to a
+// stray tab close.
+window.addEventListener('beforeunload', (e) => {
+  if(dirty.size){ e.preventDefault(); e.returnValue = ''; }
+});
+
+async function downloadReport(runRef){
+  return downloadFile(`/api/runs/${runRef}/report.csv`, `DH_Adjudication_${runRef.slice(0,8)}.csv`);
+}
+
+async function downloadFile(url, filename){
+  const res = await fetch(url, {headers: getToken() ? {Authorization: 'Bearer ' + getToken()} : {}});
+  if(!res.ok){ banner($('globalError'),'err','Download failed ('+res.status+')'); return; }
+  const blob = await res.blob();
+  // Named objectUrl, not url: `url` is this function's parameter, and
+  // redeclaring it with const is a SyntaxError that stops the entire script
+  // from parsing — which silently disables every module on the page.
+  const objectUrl = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = objectUrl;
+  a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(objectUrl);
+}
+
+/* ---------- audit ---------- */
+async function loadAudit(){
+  try{
+    const s = await api('/api/audit/stats');
+    $('auditCount').textContent = nf(s.total_events) + ' events recorded';
+    $('auditStats').innerHTML = s.by_action.length ? `<div class="tw"><table>
+      <thead><tr><th>Event type</th><th>Count</th></tr></thead>
+      <tbody>${s.by_action.slice().sort((a,b)=>b.count-a.count)
+        .map(r=>`<tr><td class="mono">${esc(r.action)}</td><td class="num">${nf(r.count)}</td></tr>`).join('')}</tbody>
+    </table></div>` : '';
+  }catch(e){ /* surfaced elsewhere */ }
+}
+
+if($('btnReloadCases')) $('btnReloadCases').onclick = () => loadRuns();
+['fGroup','fBrand'].forEach(id => {
+  if($(id)) $(id).onchange = () => loadRuns();
+});
+
+/* Bulk export. One request per case, sequentially — a browser cancels a burst
+   of parallel downloads, and a partial export of compliance records that looks
+   complete is worse than a slow one. */
+if($('btnBulk')) $('btnBulk').onclick = async () => {
+  const btn = $('btnBulk');
+  if(!runs.length){ banner($('globalError'),'warn','No cases listed to download.'); return; }
+  btn.disabled = true;
+  let done = 0;
+  for(const r of runs){
+    btn.textContent = `Downloading ${done + 1} of ${runs.length}…`;
+    try{
+      await downloadFile(`/api/runs/${r.run_ref}/report.csv`,
+        `DH_Adjudication_${slugify(r.uploaded_filename)}_${r.run_ref.slice(0,8)}.csv`);
+      done++;
+    }catch(e){ /* keep going; the count below reports the shortfall */ }
+  }
+  btn.disabled = false;
+  btn.textContent = 'Download all listed (CSV)';
+  banner($('globalError'), done === runs.length ? 'ok' : 'warn',
+    `Downloaded ${done} of ${runs.length} case report(s).`);
+};
+
+function slugify(text){
+  return String(text || 'case').replace(/[^A-Za-z0-9]+/g,'_').replace(/^_+|_+$/g,'').slice(0,40);
+}
+
+/* Templates go through downloadFile so the request carries the auth header —
+   a plain href cannot, and a token in the URL would land in browser history. */
+$('tplCsv').onclick = (e) => { e.preventDefault();
+  downloadFile('/api/runs/template.csv', 'batch-by-name-template.csv'); };
+$('tplXlsx').onclick = (e) => { e.preventDefault();
+  downloadFile('/api/runs/template.xlsx', 'batch-by-name-template.xlsx'); };
+$('btnVerify').onclick = async () => {
+  $('btnVerify').disabled = true; $('btnVerify').textContent = 'Verifying…';
+  try{
+    const v = await api('/api/audit/verify');
+    banner($('verifyResult'), v.valid ? 'ok' : 'err',
+      `<strong>${v.valid ? 'Chain intact' : 'TAMPERING DETECTED'}</strong><div>` +
+      `${nf(v.events_checked)} events verified — ${esc(v.detail)}` +
+      (v.broken_at !== null && v.broken_at !== undefined ? ` (first break at sequence ${v.broken_at})` : '') +
+      `</div>` + (v.head_hash ? `<div class="mono" style="margin-top:6px">head ${esc(v.head_hash.slice(0,32))}…</div>` : ''));
+  }catch(e){
+    banner($('verifyResult'),'err', esc(e.message));
+  }
+  $('btnVerify').disabled = false; $('btnVerify').textContent = 'Verify chain';
+};
+
+/* ---------- boot ---------- */
+async function startApp(){
+  applySession();
+  await loadWatchlists();
+  await loadRuns();
+  if(selectedRun) pollRun();
+  if(!window._wlTimer) window._wlTimer = setInterval(loadWatchlists, 8000);
+}
+
+(async function init(){
+  let health;
+  try{
+    health = await (await fetch('/api/health')).json();
+  }catch(e){
+    banner($('globalError'),'err','Cannot reach the backend. Is the server running?');
+    return;
+  }
+  SINGLE_USER = !!health.single_user_mode;
+  $('mode').textContent = SINGLE_USER ? 'local single-operator mode' : '';
+
+  if(SINGLE_USER){ hideGate(); await startApp(); return; }
+
+  // Multi-user: a stored token may still be valid, so try it before asking.
+  if(getToken()){
+    try{
+      const me = await api('/api/auth/me');
+      SESSION = {email: me.email, role: me.role};
+      hideGate();
+      await startApp();
+      return;
+    }catch(e){ /* api() already returned us to the gate */ }
+  }
+  showGate();
+})();
+</script>
+</body>
+</html>

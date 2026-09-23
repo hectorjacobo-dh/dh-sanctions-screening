@@ -1,0 +1,435 @@
+"""The scoring engine.
+
+Design constraints that come from this being a regulated control rather than a
+search feature:
+
+* **Explainable.** Every score decomposes into named components that are
+  persisted, so an auditor can reconstruct why a row scored what it scored.
+* **Deterministic.** No randomness, no clock dependence, stable ordering.
+* **Recall-biased.** A false positive costs an analyst a minute. A false
+  negative costs a sanctions breach. Where the two trade off, we keep the row.
+
+The geographic control lowers a *priority* score and is recorded as a reason
+code — it never removes a row from the report and never drops it below the
+alerting threshold on its own.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from enum import StrEnum
+
+from rapidfuzz import fuzz
+
+from .geography import countries_contradict, resolve_country
+from .normalize import (
+    acronyms_of,
+    is_acronym_candidate,
+    is_generic_token,
+    name_tokens,
+    normalize_name,
+)
+
+
+class RiskBand(StrEnum):
+    """System-proposed banding. The analyst still owns the final Decision."""
+
+    STRONG = "Strong Match"
+    POTENTIAL = "Potential Match"
+    WEAK = "Weak Match"
+
+
+class ReasonCode(StrEnum):
+    EXACT_NORMALISED = "EXACT_NORMALISED_NAME"
+    ACRONYM_BRIDGE = "ACRONYM_EXPANSION"
+    TOKEN_SUBSET = "ALL_TOKENS_PRESENT"
+    CONTAINED_NAME = "DISCRIMINATIVE_NAME_CONTAINED"
+    NAME_WITHIN_DESIGNATION = "SEARCHED_NAME_WITHIN_DESIGNATION"
+    ALIAS_HIT = "MATCHED_ON_ALIAS"
+    GEO_CONTRADICTION = "GEO_CONTRADICTION_DEPRIORITISED"
+    GEO_CONFIRMED = "GEO_CONFIRMED"
+    GEO_UNKNOWN = "GEO_UNKNOWN_NO_ADJUSTMENT"
+    SHORT_NAME = "SHORT_NAME_LOW_CONFIDENCE"
+
+
+@dataclass(frozen=True)
+class ScoreBreakdown:
+    """Component scores, persisted verbatim for audit reconstruction."""
+
+    token_set: float
+    token_sort: float
+    partial: float
+    weighted: float
+    acronym: float
+    base_score: float
+    geo_adjustment: float
+    final_score: float
+    reasons: tuple[str, ...] = field(default=())
+    length_ratio: float = 0.0
+    alignment: float = 0.0
+    token_coverage: float = 0.0
+    unmatched_target_tokens: float = 0.0
+
+    def as_dict(self) -> dict[str, float | list[str]]:
+        return {
+            "token_set_ratio": round(self.token_set, 2),
+            "token_sort_ratio": round(self.token_sort, 2),
+            "partial_ratio": round(self.partial, 2),
+            "weighted_ratio": round(self.weighted, 2),
+            "acronym_ratio": round(self.acronym, 2),
+            "length_ratio": round(self.length_ratio, 3),
+            "token_alignment": round(self.alignment, 2),
+            "token_coverage": round(self.token_coverage, 3),
+            "unmatched_target_weight": round(self.unmatched_target_tokens, 2),
+            "base_score": round(self.base_score, 2),
+            "geo_adjustment": round(self.geo_adjustment, 2),
+            "final_score": round(self.final_score, 2),
+            "reasons": list(self.reasons),
+        }
+
+
+def token_alignment(
+    query_tokens: tuple[str, ...], target_tokens: tuple[str, ...]
+) -> tuple[float, int]:
+    """Align each query token to its best unused target token.
+
+    Returns ``(coverage, unmatched_target_tokens)`` where coverage is 0..1.
+
+    This is the control for the pattern that dominates manual screening: an
+    officer types a short trading name and the designation carries a longer
+    legal one. "GAZPROM" sits inside 109 designations, but character-level
+    ratios score it ~78 against "Gazprom PMC" because two thirds of the target
+    string is unaccounted for. Token-level alignment scores what actually
+    matters — is the searched name present as a name — and reports the leftover
+    separately so the caller can price it.
+
+    Prefix matching is deliberate and one-directional per pair: "GAZPROM"
+    aligns to "GAZPROMBANK" and "GAZPROMNEFT", which is how a compliance
+    officer reads them.
+    """
+    if not query_tokens or not target_tokens:
+        return 0.0, 0
+
+    used: set[int] = set()
+    total = 0.0
+    weight = 0.0
+
+    for q_token in query_tokens:
+        best_score, best_index = 0.0, -1
+        for index, t_token in enumerate(target_tokens):
+            if index in used:
+                continue
+            if q_token == t_token:
+                score = 1.0
+            elif len(q_token) >= 5 and t_token.startswith(q_token):
+                score = 0.94
+            elif len(t_token) >= 5 and q_token.startswith(t_token):
+                score = 0.94
+            else:
+                # Only near-identical tokens count; anything looser is noise.
+                char_ratio = fuzz.ratio(q_token, t_token)
+                score = char_ratio / 100.0 if char_ratio >= 85 else 0.0
+            if score > best_score:
+                best_score, best_index = score, index
+        if best_index >= 0 and best_score > 0:
+            used.add(best_index)
+        total += best_score
+
+    # Leftover target tokens are weighted by whether they carry identity.
+    # Corporate boilerplate barely counts; a distinctive word costs fully.
+    for index, t_token in enumerate(target_tokens):
+        if index in used:
+            continue
+        weight += 0.15 if is_generic_token(t_token) else 1.0
+
+    return total / len(query_tokens), weight
+
+
+def _alignment_score(coverage: float, unmatched_weight: float) -> float:
+    """Convert an alignment into a 0-100 score.
+
+    Every query token accounted for is the strong signal. Unexplained target
+    tokens shave points in proportion to how much identity they carry, so
+    "Gazprom PMC" outranks "Gazprom Neft Shelf Yamal" while
+    "PUBLIC JOINT STOCK COMPANY GAZPROM NEFT" is not punished for four words
+    of company-law boilerplate.
+    """
+    if coverage <= 0:
+        return 0.0
+    return max(0.0, min(100.0, 100.0 * coverage - 3.0 * max(0.0, unmatched_weight)))
+
+
+def _acronym_score(partner_raw: str, target_raw: str) -> tuple[float, bool]:
+    """Bridge acronyms against expansions in both directions.
+
+    This is the control for the "UAC" vs "United Aircraft Corporation" failure
+    mode called out in the process review.
+
+    Takes the *raw* names deliberately. Normalisation strips the legal form, and
+    the legal form is usually part of the acronym — expanding the normalised
+    "United Aircraft" yields "UA" and the match is lost.
+    """
+    partner_norm = normalize_name(partner_raw)
+    target_norm = normalize_name(target_raw)
+    if not partner_norm or not target_norm:
+        return 0.0, False
+
+    partner_is_acronym = is_acronym_candidate(partner_norm)
+    target_is_acronym = is_acronym_candidate(target_norm)
+
+    # Only meaningful when exactly one side is an acronym.
+    if partner_is_acronym == target_is_acronym:
+        return 0.0, False
+
+    if partner_is_acronym:
+        short, long_name = partner_norm.strip(), target_raw
+    else:
+        short, long_name = target_norm.strip(), partner_raw
+
+    # Two-letter acronyms are not discriminative: "BM" expands to any two-word
+    # name beginning B_ M_, which matched "Bank Melli" to "BM Holding AG" at
+    # full score. Three characters is the shortest length that carries signal.
+    expansions = acronyms_of(long_name)
+    if not expansions or len(short) < 3:
+        return 0.0, False
+
+    if short in expansions:
+        return 100.0, True
+    # Tolerate one dropped/extra initial (e.g. "UAC" vs "UACO").
+    best = max(fuzz.ratio(short, expansion) for expansion in expansions)
+    return (float(best), True) if best >= 85 else (0.0, False)
+
+
+def score_pair(
+    partner_name: str,
+    target_name: str,
+    partner_country: str | None = None,
+    target_geography: str | None = None,
+    *,
+    geo_penalty: int = 15,
+    matched_on_alias: bool = False,
+    recall_mode: bool = False,
+) -> ScoreBreakdown:
+    """Score one partner/target pair and explain the result.
+
+    ``recall_mode`` selects the calibration, and the two are genuinely
+    different controls rather than a tuning preference:
+
+    * **True — manual search.** An officer typed one name on purpose and will
+      read every row. Token alignment always counts, so a short distinctive
+      name reaches the long designations that contain it. This is what a
+      commercial screening terminal does, and what "90% should find Gazprom"
+      means in practice.
+    * **False — batch screening.** The same rule applied across 719,651 partner
+      names is unusable: "Pizza" is contained in "Pizza House Trading Co"
+      exactly as "Gazprom" is contained in "Gazprom PMC", and nothing in the
+      names themselves separates them. Alignment therefore only counts when the
+      contained name is discriminative on its own (3+ tokens, or 12+
+      characters), which is what keeps batch volume tractable.
+
+    The asymmetry is a deliberate, documented policy choice about where the
+    recall/volume trade-off should sit, not an inconsistency.
+    """
+    partner_norm = normalize_name(partner_name)
+    target_norm = normalize_name(target_name)
+
+    if not partner_norm or not target_norm:
+        return ScoreBreakdown(0, 0, 0, 0, 0, 0, 0, 0, ())
+
+    reasons: list[str] = []
+
+    token_set = fuzz.token_set_ratio(partner_norm, target_norm)
+    token_sort = fuzz.token_sort_ratio(partner_norm, target_norm)
+    partial = fuzz.partial_ratio(partner_norm, target_norm)
+    weighted = fuzz.WRatio(partner_norm, target_norm)
+    acronym, acronym_used = _acronym_score(partner_name, target_name)
+
+    # Length agreement between the two normalised names.
+    length_ratio = min(len(partner_norm), len(target_norm)) / max(
+        len(partner_norm), len(target_norm)
+    )
+
+    # token_sort_ratio is the primary: order-insensitive but still sensitive to
+    # length, so it cannot be satisfied by a fragment.
+    #
+    # token_set_ratio is GATED on length agreement. It returns ~100 whenever one
+    # name's tokens are a subset of the other's, so short partner names
+    # ("Pizza", "Al Noor") otherwise match hundreds of long designations at full
+    # score. Measured against the live watchlist, ungated scoring put 34% of all
+    # scored pairs over an 80% threshold — an unusable alert volume.
+    #
+    # partial_ratio and WRatio are recorded for the audit trail but NEVER
+    # contribute to the score. Both are substring tests — WRatio falls back to
+    # partial_ratio * 0.9 for uneven lengths — and together they were the single
+    # largest source of false positives, concentrating ~53k spurious alerts into
+    # one 85-90 band on a 3k-name sample.
+    # A short name fully contained in a longer one is the hard case: it is the
+    # false-positive engine ("Pizza" in "Pizza House Trading Co") AND a genuine
+    # true positive ("Banco de Venezuela" in "BANCO DE VENEZUELA SA BANCO
+    # UNIVERSAL"). Length ratio alone cannot separate them — both sit near 0.5.
+    #
+    # What separates them is whether the contained name is *discriminative on
+    # its own*: three or more tokens, or twelve or more characters. "Pizza"
+    # (1 token, 5 chars) is not; "Banco de Venezuela" (3 tokens, 18 chars) is.
+    partner_tokens_set = set(name_tokens(partner_name))
+    target_tokens_set = set(name_tokens(target_name))
+    shorter, longer = (
+        (partner_norm, target_tokens_set)
+        if len(partner_norm) <= len(target_norm)
+        else (target_norm, partner_tokens_set)
+    )
+    shorter_tokens = shorter.split()
+    contained = bool(shorter_tokens) and all(t in longer for t in shorter_tokens)
+    discriminative = len(shorter_tokens) >= 3 or len(shorter) >= 12
+
+    # Token-level alignment: does the searched name appear *as a name* in the
+    # designation, allowing prefix forms (GAZPROM -> GAZPROMBANK)?
+    partner_tokens = name_tokens(partner_name)
+    target_tokens = name_tokens(target_name)
+    coverage, unmatched = token_alignment(partner_tokens, target_tokens)
+    alignment = _alignment_score(coverage, unmatched)
+
+    base = float(token_sort)
+    if length_ratio >= 0.70 or (contained and discriminative):
+        base = max(base, float(token_set))
+
+    # In manual search alignment always counts; in batch only for a name
+    # discriminative on its own. See the docstring — this is the recall/volume
+    # policy split, and it is the difference between "gazprom" returning
+    # nothing and returning the 100+ designations that contain it.
+    if recall_mode or discriminative:
+        base = max(base, alignment)
+        if alignment >= base and coverage >= 0.999 and unmatched > 0:
+            reasons.append(ReasonCode.NAME_WITHIN_DESIGNATION)
+
+    base = max(base, acronym)
+
+    if partner_norm == target_norm:
+        base = 100.0
+        reasons.append(ReasonCode.EXACT_NORMALISED)
+    if acronym_used and acronym >= 85:
+        reasons.append(ReasonCode.ACRONYM_BRIDGE)
+    if matched_on_alias:
+        reasons.append(ReasonCode.ALIAS_HIT)
+
+    if target_tokens_set and target_tokens_set.issubset(partner_tokens_set):
+        reasons.append(ReasonCode.TOKEN_SUBSET)
+    if contained and discriminative and length_ratio < 0.70:
+        reasons.append(ReasonCode.CONTAINED_NAME)
+
+    # Very short cores produce unstable ratios; flag rather than suppress.
+    if min(len(partner_norm), len(target_norm)) <= 4:
+        reasons.append(ReasonCode.SHORT_NAME)
+
+    # --- Geographic control -------------------------------------------
+    partner_codes = resolve_country(partner_country)
+    target_codes = resolve_country(target_geography)
+    geo_adjustment = 0.0
+
+    if not partner_codes or not target_codes:
+        reasons.append(ReasonCode.GEO_UNKNOWN)
+    elif partner_codes & target_codes:
+        reasons.append(ReasonCode.GEO_CONFIRMED)
+    elif countries_contradict(partner_country, target_geography):
+        geo_adjustment = -float(geo_penalty)
+        reasons.append(ReasonCode.GEO_CONTRADICTION)
+
+    final = max(0.0, min(100.0, base + geo_adjustment))
+
+    return ScoreBreakdown(
+        token_set=float(token_set),
+        token_sort=float(token_sort),
+        partial=float(partial),
+        weighted=float(weighted),
+        acronym=float(acronym),
+        base_score=float(base),
+        geo_adjustment=geo_adjustment,
+        final_score=final,
+        reasons=tuple(reasons),
+        length_ratio=length_ratio,
+        alignment=alignment,
+        token_coverage=coverage,
+        unmatched_target_tokens=unmatched,
+    )
+
+
+def band_for(breakdown: ScoreBreakdown, threshold: int, strong_threshold: int) -> RiskBand:
+    """Band on the *pre-geography* score.
+
+    The geographic signal reorders the analyst's queue but must not be able to
+    push a genuine name match out of the alerting population on its own — that
+    would convert a soft signal into a silent suppression.
+    """
+    if breakdown.base_score >= strong_threshold:
+        return RiskBand.STRONG
+    if breakdown.base_score >= threshold:
+        return RiskBand.POTENTIAL
+    return RiskBand.WEAK
+
+
+# Aliases already drive candidate recall — the blocking index registers every
+# published spelling — but scoring used only the primary name, so the spelling
+# that caused the recall was then thrown away.
+#
+# The cost is concrete. OFAC lists "PUBLIC JOINT STOCK COMPANY UNITED AIRCRAFT
+# CORPORATION" with the aliases "UNITED AIRCRAFT CORPORATION" and "PJSC UAC".
+# A search for "UAC" reaches the designation through the alias index, then
+# scores against the primary, whose acronym is PJSCUAC, and returns nothing.
+# "UAC" versus "United Aircraft Corporation" is the first requirement this
+# system was built to meet.
+ALIAS_SCORING_LIMIT = 25
+
+
+def score_against_all_names(
+    query: str,
+    primary_name: str,
+    aliases: str | list[str] | None = None,
+    partner_country: str | None = None,
+    target_geography: str | None = None,
+    *,
+    geo_penalty: int = 15,
+    recall_mode: bool = False,
+    alias_limit: int = ALIAS_SCORING_LIMIT,
+) -> tuple[ScoreBreakdown, str]:
+    """Score a query against every published spelling; return the best.
+
+    Returns ``(breakdown, matched_name)`` so the record can state which
+    spelling matched — "matched on alias 'PJSC UAC'" is defensible in a way
+    that a bare score against a different string is not.
+
+    ``alias_limit`` bounds the worst case: 99% of designations carry 17 or
+    fewer aliases, but one carries 144, and a manual search must stay
+    interactive. When the cap truncates, the primary name and the first
+    ``alias_limit`` spellings are still scored.
+    """
+    best = score_pair(
+        query,
+        primary_name,
+        partner_country,
+        target_geography,
+        geo_penalty=geo_penalty,
+        recall_mode=recall_mode,
+    )
+    matched_name = primary_name
+
+    if isinstance(aliases, str):
+        alias_list = [a.strip() for a in aliases.split(" / ") if a.strip()]
+    else:
+        alias_list = [a.strip() for a in (aliases or []) if a and a.strip()]
+
+    for alias in alias_list[:alias_limit]:
+        if alias.casefold() == primary_name.casefold():
+            continue
+        candidate = score_pair(
+            query,
+            alias,
+            partner_country,
+            target_geography,
+            geo_penalty=geo_penalty,
+            recall_mode=recall_mode,
+            matched_on_alias=True,
+        )
+        if candidate.base_score > best.base_score:
+            best, matched_name = candidate, alias
+
+    return best, matched_name

@@ -1,0 +1,43 @@
+# Secrets
+.env
+*.pem
+*.key
+
+# Confidential operational data — partner exports and screening output must
+# never reach a repository.
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/*.csv
+data/*.xml
+data/*.xlsx
+!data/region_map.json
+
+# The pre-purge archive. Holds 902 alerts and 236 personal names (UBO records)
+# retained as evidence that the purge was performed correctly. Personal data
+# under GDPR, and git history is effectively permanent — it must never be
+# committed. Keep it wherever Compliance retains records, not here.
+archive/
+
+# Generated locally, not source.
+data/server.log
+**/workbench.html
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+dist/
+*.local
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
