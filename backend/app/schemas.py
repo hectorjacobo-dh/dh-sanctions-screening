@@ -34,6 +34,14 @@ class UserCreate(BaseModel):
     region: str = ""
 
 
+class SourceChanges(BaseModel):
+    """What one authority changed at its most recent publication."""
+
+    added: int
+    removed: int
+    amended: int
+
+
 class WatchlistStatus(BaseModel):
     source: str
     record_count: int
@@ -43,6 +51,9 @@ class WatchlistStatus(BaseModel):
     last_attempt_status: str
     last_attempt_utc: str | None
     last_error: str
+    # None when there was no earlier snapshot to compare against, which is
+    # not the same as a refresh that changed nothing.
+    changes: SourceChanges | None = None
 
 
 class DashboardStatus(BaseModel):

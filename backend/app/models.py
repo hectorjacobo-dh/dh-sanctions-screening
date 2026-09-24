@@ -103,6 +103,23 @@ class WatchlistRefresh(Base):
     error: Mapped[str] = mapped_column(Text, default="")
     is_active: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
 
+    # What this refresh changed, measured against the snapshot it replaced and
+    # stored once rather than recomputed per page load. Counted on the
+    # regulator's own identifier, not on the name, so a party that was renamed
+    # reads as amended rather than as one deletion and one addition.
+    #
+    # "Amended" matters on its own: the UN has republished with an unchanged
+    # record count and different content — corrections to dates of birth and
+    # added aliases. A count alone cannot see that, and an added alias can be
+    # the difference between a hit and a miss.
+    added_count: Mapped[int] = mapped_column(Integer, default=0)
+    removed_count: Mapped[int] = mapped_column(Integer, default=0)
+    amended_count: Mapped[int] = mapped_column(Integer, default=0)
+    # Null when there was no earlier snapshot to compare with — a first load,
+    # or one where the predecessor has been pruned. Distinct from "nothing
+    # changed", which is what three zeroes would otherwise imply.
+    compared_to_refresh_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
 
 class WatchlistTarget(Base):
     """A designated party, flattened to the shared canonical schema."""

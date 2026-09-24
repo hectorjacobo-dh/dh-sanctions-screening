@@ -143,6 +143,67 @@ def _load_payload(
     return (content, f"file://{fallback.as_posix()}", hashlib.sha256(content).hexdigest(), [], [])
 
 
+# The fields that make a designation *different* rather than merely present.
+# A change to any of them can turn a miss into a hit, so all of them count as
+# an amendment. Deliberately excludes nothing an officer would screen against.
+_MATERIAL_FIELDS = (
+    WatchlistTarget.target_name,
+    WatchlistTarget.aliases,
+    WatchlistTarget.subject_type,
+    WatchlistTarget.sanctions_program,
+    WatchlistTarget.geography,
+    WatchlistTarget.dob,
+    WatchlistTarget.nationality,
+    WatchlistTarget.identifiers,
+    WatchlistTarget.listing_reason,
+)
+
+
+def _fingerprints(db: Session, refresh_id: int) -> dict[str, int]:
+    """Every designation in one snapshot: regulator id -> content hash.
+
+    Keyed on the regulator's own identifier rather than the name, so a party
+    that was renamed is reported as amended instead of as one deletion plus one
+    unrelated addition.
+    """
+    rows = db.execute(
+        select(WatchlistTarget.watchlist_id, *_MATERIAL_FIELDS).where(
+            WatchlistTarget.refresh_id == refresh_id
+        )
+    ).all()
+    out: dict[str, int] = {}
+    for row in rows:
+        key = (row[0] or "").strip() or f"name:{row[1]}"
+        out[key] = hash(row[1:])
+    return out
+
+
+def compute_delta(db: Session, refresh: WatchlistRefresh, previous_id: int | None) -> None:
+    """Record what this refresh changed against the snapshot it replaced.
+
+    Stored on the refresh row, once, rather than recomputed on every page load
+    — the dashboard is opened far more often than a list changes.
+    """
+    refresh.compared_to_refresh_id = previous_id
+    if previous_id is None:
+        refresh.added_count = refresh.removed_count = refresh.amended_count = 0
+        return
+
+    before = _fingerprints(db, previous_id)
+    after = _fingerprints(db, refresh.id)
+    if not before:
+        # The predecessor's rows were pruned; a delta would be a fiction.
+        refresh.compared_to_refresh_id = None
+        return
+
+    before_keys, after_keys = set(before), set(after)
+    refresh.added_count = len(after_keys - before_keys)
+    refresh.removed_count = len(before_keys - after_keys)
+    refresh.amended_count = sum(
+        1 for key in before_keys & after_keys if before[key] != after[key]
+    )
+
+
 def refresh_source(db: Session, spec: SourceSpec, *, actor: str = "scheduler") -> WatchlistRefresh:
     """Refresh a single regulator's list. Never raises; records failure state."""
     settings = get_settings()
@@ -205,6 +266,15 @@ def refresh_source(db: Session, spec: SourceSpec, *, actor: str = "scheduler") -
             ]
         )
 
+        # The snapshot this one replaces, captured before it is demoted.
+        previous_id = db.execute(
+            select(WatchlistRefresh.id).where(
+                WatchlistRefresh.source == spec.key,
+                WatchlistRefresh.id != refresh.id,
+                WatchlistRefresh.is_active.is_(True),
+            )
+        ).scalar()
+
         # Promote atomically: demote the prior snapshot only now that the new
         # one is committed to the session.
         db.execute(
@@ -224,6 +294,8 @@ def refresh_source(db: Session, spec: SourceSpec, *, actor: str = "scheduler") -
         refresh.status = "success"
         refresh.is_active = True
         refresh.completed_at = utcnow()
+        db.flush()
+        compute_delta(db, refresh, previous_id)
         db.commit()
 
         record_event(
@@ -237,6 +309,9 @@ def refresh_source(db: Session, spec: SourceSpec, *, actor: str = "scheduler") -
                 "skipped_generic_legal_form": discarded,
                 "payload_sha256": digest,
                 "source_url": resolved_url,
+                "added": refresh.added_count,
+                "removed": refresh.removed_count,
+                "amended": refresh.amended_count,
                 # A changed data source is exactly what an auditor must be able
                 # to see. Recorded only when recovery actually happened, so the
                 # chain is not filled with noise on a normal day.
@@ -333,6 +408,18 @@ def active_snapshot(db: Session) -> dict[str, dict]:
             "last_attempt_status": last_attempt.status if last_attempt else "never",
             "last_attempt_utc": started.isoformat() if started else None,
             "last_error": last_attempt.error if last_attempt and last_attempt.status == "failed" else "",
+            # What this authority changed when it last published. None means
+            # there was nothing to compare against — a first load, or a
+            # predecessor since pruned — which is not the same as "no changes".
+            "changes": (
+                {
+                    "added": active.added_count,
+                    "removed": active.removed_count,
+                    "amended": active.amended_count,
+                }
+                if active is not None and active.compared_to_refresh_id is not None
+                else None
+            ),
         }
     return status
 

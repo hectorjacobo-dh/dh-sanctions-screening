@@ -45,6 +45,11 @@
   .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
   .between{justify-content:space-between}
   .tiles{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(210px,1fr))}
+  .chgrow{display:flex;gap:5px;flex-wrap:wrap;margin-top:3px}
+  .chg{font-size:10.5px;padding:1px 6px;border-radius:4px;font-weight:600;white-space:nowrap}
+  .chg.add{background:rgba(46,204,113,.16);color:var(--ok)}
+  .chg.rem{background:rgba(255,77,79,.16);color:var(--danger)}
+  .chg.amd{background:rgba(245,166,35,.16);color:var(--warn)}
   .tile{background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:13px}
   .tile .nm{font-weight:600;display:flex;align-items:center;gap:8px}
   .tile .ct{font-size:21px;font-weight:700;margin:6px 0 2px;font-variant-numeric:tabular-nums}
@@ -719,6 +724,25 @@ document.querySelectorAll('nav.tabs button').forEach(btn => {
 /* ---------- watchlists ---------- */
 let refreshInFlight = false;
 
+/* What this authority changed when it last published.
+   Amendments are shown alongside additions and removals because a count alone
+   cannot see them: the UN has republished with an unchanged record count and
+   different content — corrected dates of birth, added aliases — and an added
+   alias can be the difference between a hit and a miss.
+   Absent comparison and "nothing changed" are different statements, so they
+   are worded differently rather than both showing zeroes. */
+function changeHtml(s){
+  const c = s.changes;
+  if(!c) return '<div class="mt dim" title="No earlier snapshot to compare against">first load — no comparison</div>';
+  if(!c.added && !c.removed && !c.amended)
+    return '<div class="mt dim">no changes since the previous refresh</div>';
+  const parts = [];
+  if(c.added)   parts.push(`<span class="chg add">+${nf(c.added)} added</span>`);
+  if(c.removed) parts.push(`<span class="chg rem">−${nf(c.removed)} removed</span>`);
+  if(c.amended) parts.push(`<span class="chg amd">${nf(c.amended)} amended</span>`);
+  return `<div class="mt chgrow" title="Measured against the snapshot this refresh replaced, on the regulator's own identifier">${parts.join('')}</div>`;
+}
+
 function tileHtml(s, staleHours, batchRunning){
   const age = s.last_success_utc ? (Date.now() - new Date(s.last_success_utc).getTime())/3.6e6 : null;
   // A source that has not started yet during an in-flight refresh is queued,
@@ -736,6 +760,7 @@ function tileHtml(s, staleHours, batchRunning){
     <div class="ct">${nf(s.record_count)}</div>
     <div class="mt">${esc(when)}</div>
     ${s.last_success_utc ? `<div class="mt" title="last successful refresh">${esc(berlin(s.last_success_utc, true))} ${esc(berlinLabel())}</div>` : ''}
+    ${changeHtml(s)}
     ${s.payload_sha256 ? `<div class="mt" title="SHA-256 of the exact published file ingested">sha256 ${esc(s.payload_sha256.slice(0,16))}…</div>` : ''}
     ${s.last_attempt_status === 'failed' ? `<div class="mt" style="color:var(--danger)">failed: ${esc((s.last_error||'').slice(0,140))}</div>` : ''}
   </div>`;
