@@ -1089,6 +1089,7 @@ function comparisonCell(h){
     ['Date of birth', h.dob_signal],
     ['Nationality',   h.nationality_signal],
     ['Country',       h.country_signal],
+    ['Document issuer', h.document_country_signal],
     ['Document no.',  h.id_signal]
   ].filter(([,v]) => v);
   const searched = rows.filter(([,v]) => v !== 'you searched without this');

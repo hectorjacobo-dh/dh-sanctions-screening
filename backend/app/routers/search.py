@@ -33,6 +33,7 @@ from ..geography import resolve_country, resolve_region
 from ..ingest.runner import active_snapshot
 from ..matching import band_for, score_against_all_names
 from ..models import MatchResult, ScreeningRun, User, utcnow
+from ..ingest.identity import issuing_countries
 from ..normalize import normalize_name
 from ..taxonomy import normalise_brand, normalise_group
 from ..screening import _Target, _load_targets
@@ -100,6 +101,9 @@ class SearchHit(BaseModel):
     dob_signal: str
     nationality_signal: str
     country_signal: str = ""
+    # The issuer of the party's identity documents. Related to nationality
+    # but not the same claim, so it is reported separately.
+    document_country_signal: str = ""
     id_signal: str
 
 
@@ -175,6 +179,38 @@ def _country_signal(query_value: str, target_value: str) -> str:
     if not query_codes or not target_codes:
         return NOT_COMPARABLE
     return "matches" if query_codes & target_codes else "differs"
+
+
+def _document_country_signal(query_value: str, target: _Target) -> str:
+    """Compare a searched country against the issuers of the party's documents.
+
+    Its own signal, never folded into nationality. A state issues documents to
+    people who are not its nationals — residence cards, tax numbers — so
+    treating the issuer as a nationality would assert something the regulator
+    did not.
+
+    OFAC SDN 44522 is why this exists: an identification number issued by
+    Colombia, an address in Venezuela, and no nationality published at all. The
+    nationality signal correctly reported "not published", which left the only
+    state-issued evidence on the record invisible to the comparison.
+
+    Advisory only: it is displayed, and deliberately does NOT move the score.
+    The geographic control has never been calibrated against this input, and
+    changing what a match is worth is not something to do on an assumption.
+    """
+    if not query_value:
+        return NOT_SEARCHED
+    issuers = issuing_countries(target.identifiers)
+    if not issuers:
+        return NOT_PUBLISHED
+    query_codes = resolve_country(query_value)
+    issuer_codes: set[str] = set()
+    for issuer in issuers:
+        issuer_codes |= resolve_country(issuer)
+    if not query_codes or not issuer_codes:
+        return NOT_COMPARABLE
+    named = ", ".join(issuers[:3])
+    return f"issued by {named}" if query_codes & issuer_codes else f"issued by {named} instead"
 
 
 def _id_signal(national_id: str, target: _Target) -> str:
@@ -280,6 +316,9 @@ def search(
                     # list never asserted.
                     nationality_signal=_country_signal(body.nationality, target.nationality),
                     country_signal=_country_signal(body.country, target.geography),
+                    document_country_signal=_document_country_signal(
+                        body.nationality or body.country, target
+                    ),
                     id_signal=_id_signal(body.national_id, target),
                 )
             )

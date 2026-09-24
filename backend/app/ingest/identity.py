@@ -314,3 +314,32 @@ def audit_clauses(remark_values: list[str]) -> tuple[Counter, Counter]:
         for clause in parsed.unclassified:
             residue[re.match(r"[^0-9]{0,40}", clause).group(0).strip() or clause] += 1
     return classified, residue
+
+
+# The country that issued an identity document, as every regulator writes it:
+# "Passport A0237802 (Venezuela)", "Identification Number 179029472 (Colombia)".
+_ISSUER = re.compile(r"\(([^)]{2,60})\)")
+
+
+def issuing_countries(identifiers: str) -> list[str]:
+    """Countries named on a party's identity documents.
+
+    Deliberately NOT treated as nationality. A state issues documents to people
+    who are not its nationals — a residence card, a tax number, a company
+    registration — so folding this into the nationality field would assert
+    something the regulator did not.
+
+    OFAC SDN 44522 is the case in point: an identification number issued by
+    Colombia, an address in Venezuela, and no nationality published at all.
+    Reporting "Colombian" there would be an invention; reporting nothing throws
+    away the only state-issued evidence on the record. It is its own signal.
+    """
+    if not identifiers:
+        return []
+    out: list[str] = []
+    for candidate in _ISSUER.findall(identifiers):
+        cleaned = _tidy(candidate)
+        # "expires 08 Apr 2013" and similar notes also sit in brackets.
+        if cleaned and not any(ch.isdigit() for ch in cleaned) and cleaned not in out:
+            out.append(cleaned)
+    return out

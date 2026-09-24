@@ -179,3 +179,48 @@ def test_eu_nationality_is_not_folded_into_geography() -> None:
     target = eu.ingest(_eu_payload())[0]
     assert target.nationality == "Venezuela"
     assert "Venezuela" not in target.geography
+
+
+# ---------------------------------------------------------------------------
+# document issuing country
+# ---------------------------------------------------------------------------
+
+
+def test_the_issuer_of_an_identity_document_is_recoverable() -> None:
+    from app.ingest.identity import issuing_countries
+
+    assert issuing_countries("Identification Number 179029472 (Colombia)") == ["Colombia"]
+    assert issuing_countries(
+        "Cedula No. 8370825 (Venezuela) | Passport A0237802 (Venezuela)"
+    ) == ["Venezuela"]
+
+
+def test_a_bracketed_note_is_not_mistaken_for_a_country() -> None:
+    """Regulators put other things in brackets too."""
+    from app.ingest.identity import issuing_countries
+
+    assert issuing_countries("Passport B0133819 (Venezuela) expires 08 Apr 2013") == [
+        "Venezuela"
+    ]
+    assert issuing_countries("Tax ID No. 9113562152.") == []
+    assert issuing_countries("") == []
+
+
+def test_the_issuer_is_never_treated_as_a_nationality() -> None:
+    """The distinction OFAC SDN 44522 makes concrete.
+
+    That record carries an identification number issued by Colombia, an
+    address in Venezuela, and no nationality at all. A state issues documents
+    to people who are not its nationals, so writing "Colombian" into the
+    nationality field would assert something the regulator did not.
+    """
+    from app.ingest.identity import parse_ofac_remarks
+
+    remarks = (
+        "DOB 10 Apr 1981; Gender Male; "
+        "Identification Number 179029472 (Colombia); Linked To: HIZBALLAH."
+    )
+    parsed = parse_ofac_remarks(remarks)
+
+    assert parsed.nationality == []          # nothing published, nothing invented
+    assert parsed.identifiers == ["Identification Number 179029472 (Colombia)"]
