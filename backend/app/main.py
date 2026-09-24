@@ -20,7 +20,7 @@ from .config import describe_config_sources, get_settings
 from .database import SessionLocal, init_db
 from .ingest.runner import active_snapshot, refresh_all
 from .network_guard import NetworkGuardMiddleware
-from .routers import audit, runs, search, users, watchlists
+from .routers import audit, labels, runs, search, users, watchlists
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -220,6 +220,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(labels.router)
 app.include_router(users.router)
 app.include_router(watchlists.router)
 app.include_router(runs.router)

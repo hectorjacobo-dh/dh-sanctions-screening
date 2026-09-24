@@ -35,6 +35,16 @@
   header.top{display:flex;align-items:center;gap:14px;padding:12px 22px;background:var(--surface);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:20}
   header.top h1{font-size:15px;margin:0;font-weight:700}
   .spacer{flex:1}
+  .editbar{position:sticky;top:0;z-index:40;display:flex;align-items:center;gap:10px;
+    flex-wrap:wrap;padding:10px 22px;background:var(--warn);color:#1a1200;font-size:13px}
+  .editbar .dim{color:#3a2c00}
+  .editbar .spacer{flex:1}
+  /* Outline what can be changed, so edit mode is not a guessing game. */
+  body.editing [data-editable]{outline:1px dashed var(--warn);outline-offset:2px;
+    cursor:text;border-radius:3px}
+  body.editing [data-editable]:hover{background:rgba(245,166,35,.12)}
+  body.editing [data-editable]:focus{outline:2px solid var(--accent);background:rgba(37,99,235,.08)}
+  .edited-marker{outline:1px dashed var(--ok) !important}
   nav.tabs{display:flex;gap:2px;padding:0 22px;background:var(--surface);border-bottom:1px solid var(--border);position:sticky;top:49px;z-index:19}
   nav.tabs button{border:none;border-bottom:2px solid transparent;background:none;border-radius:0;padding:10px 14px;color:var(--dim)}
   nav.tabs button.active{color:var(--text);border-bottom-color:var(--accent);font-weight:600}
@@ -189,8 +199,21 @@
   <span class="whoami" id="whoami"></span>
   <span class="dim mono" id="mode"></span>
   <button id="themeBtn" type="button" title="Switch between dark, light and your system setting"></button>
+  <button id="btnEditText" type="button" title="Change the wording on this page">Edit text</button>
   <button id="btnSignOut" type="button" class="hide">Sign out</button>
 </header>
+
+<!-- Only visible in edit mode. Kept out of the page flow so entering and
+     leaving edit mode does not move everything else around. -->
+<div id="editBar" class="editbar hide">
+  <strong>Editing the wording.</strong>
+  <span class="dim">Click any highlighted text and type. Headings, labels and help text only.</span>
+  <span class="spacer"></span>
+  <span class="dim" id="editCount"></span>
+  <button id="btnEditReset" type="button" title="Restore the original wording everywhere">Restore all</button>
+  <button id="btnEditCancel" type="button">Cancel</button>
+  <button id="btnEditSave" type="button" class="primary">Save wording</button>
+</div>
 
 <nav class="tabs">
   <button data-tab="search" class="active">Name search</button>
@@ -265,9 +288,6 @@
             Fuzziness — match threshold: <strong id="qThVal">75%</strong>
           </label>
           <input type="range" id="qTh" min="50" max="100" value="75" />
-          <div class="dim" style="font-size:11px;margin-top:2px">
-            lower = broader, noisier · higher = stricter, riskier
-          </div>
         </div>
         <div>
           <label class="dim" style="font-size:12px;display:block;margin-bottom:5px">Subject type</label>
@@ -708,6 +728,178 @@ function applyTheme(t){
 })();
 
 /* ---------- tabs ---------- */
+/* ============================================================
+   Editable wording
+   ------------------------------------------------------------
+   Lets the wording be corrected without a developer. Compliance language
+   changes, and waiting on an engineer for a sentence is how a tool ends up
+   saying something nobody agrees with.
+
+   Only static page furniture is editable — headings, field labels, help text.
+   Anything inside a container the page re-renders is excluded: an override
+   there would be wiped the next time results were drawn, which reads as the
+   edit having silently failed.
+
+   An override is anchored by BOTH a CSS path and the original text, and is
+   applied only if the element is still there and still says what it said. If
+   the interface is restructured later, a stale override lands on nothing
+   rather than on the wrong element, and edit mode reports how many were
+   ignored.
+   ============================================================ */
+
+/* Containers whose innerHTML is replaced at runtime. Nothing inside them can
+   hold an override. */
+const VOLATILE = ['searchResult','searchMeta','runDetail','runsBody','casesBody',
+  'wlTiles','auditStats','auditList','usersBody','whoami','countryList','mode',
+  'caseResult','uploadError','globalError','startupNote','detectNote','verifyResult',
+  'snapResult','editBar','prov','snapSummary'];
+
+let LABELS = [];
+let editing = false;
+
+function isVolatile(el){
+  for(let n = el; n && n !== document.body; n = n.parentElement){
+    if(n.id && VOLATILE.indexOf(n.id) >= 0) return true;
+  }
+  return false;
+}
+
+/* A stable-enough address: tag plus nth-of-type, walking up to the nearest id.
+   Paths are recomputed on every load, so they only need to hold between
+   writing an override and applying it. */
+function pathOf(el){
+  const parts = [];
+  for(let n = el; n && n !== document.body; n = n.parentElement){
+    if(n.id){ parts.unshift('#' + CSS.escape(n.id)); break; }
+    const tag = n.tagName.toLowerCase();
+    const kin = Array.from(n.parentElement ? n.parentElement.children : [])
+      .filter(c => c.tagName === n.tagName);
+    parts.unshift(kin.length > 1 ? tag + ':nth-of-type(' + (kin.indexOf(n)+1) + ')' : tag);
+  }
+  return parts.join('>');
+}
+
+/* Leaf elements holding their own words. Anything with element children is
+   excluded, so editing a heading cannot swallow the controls beside it. */
+function editableElements(){
+  const wanted = 'h1,h2,h3,h4,label,p,span,div,button,th,strong,em,legend,summary';
+  return Array.from(document.querySelectorAll(wanted)).filter(el => {
+    if(isVolatile(el)) return false;
+    if(el.closest('#editBar')) return false;
+    if(el.children.length) return false;
+    const text = (el.textContent || '').trim();
+    if(!text || text.length > 400) return false;
+    if(el.id && el.id.indexOf('btnEdit') === 0) return false;
+    return true;
+  });
+}
+
+async function loadLabels(){
+  try{ LABELS = await api('/api/labels'); }catch(e){ LABELS = []; }
+  applyLabels();
+}
+
+function applyLabels(){
+  let stale = 0;
+  LABELS.forEach(entry => {
+    let el = null;
+    try{ el = document.querySelector(entry.path); }catch(e){ el = null; }
+    const now = el ? (el.textContent || '').trim() : '';
+    if(el && now === (entry.original || '').trim()){
+      el.textContent = entry.text;
+      el.dataset.edited = '1';
+    } else if(el && now === (entry.text || '').trim()){
+      el.dataset.edited = '1';
+    } else {
+      stale++;
+    }
+  });
+  window.STALE_LABELS = stale;
+}
+
+function enterEditMode(){
+  editing = true;
+  document.body.classList.add('editing');
+  $('editBar').classList.remove('hide');
+  $('btnEditText').textContent = 'Editing…';
+  editableElements().forEach(el => {
+    el.setAttribute('data-editable','1');
+    el.setAttribute('contenteditable','true');
+    el.setAttribute('spellcheck','true');
+    if(el.dataset.edited) el.classList.add('edited-marker');
+    if(!el.dataset.original) el.dataset.original = (el.textContent || '').trim();
+  });
+  refreshEditCount();
+  document.addEventListener('input', refreshEditCount, true);
+}
+
+function leaveEditMode(){
+  editing = false;
+  document.body.classList.remove('editing');
+  $('editBar').classList.add('hide');
+  $('btnEditText').textContent = 'Edit text';
+  document.querySelectorAll('[data-editable]').forEach(el => {
+    el.removeAttribute('contenteditable');
+    el.removeAttribute('data-editable');
+    el.classList.remove('edited-marker');
+  });
+  document.removeEventListener('input', refreshEditCount, true);
+}
+
+function collectEdits(){
+  const out = [];
+  document.querySelectorAll('[data-editable]').forEach(el => {
+    const now = (el.textContent || '').trim();
+    const before = el.dataset.original || '';
+    if(!now) return;
+    const path = pathOf(el);
+    const existing = LABELS.filter(l => l.path === path)[0];
+    if(now !== before){
+      out.push({path: path, original: existing ? existing.original : before, text: now});
+    } else if(existing && existing.text === now){
+      out.push(existing);
+    }
+  });
+  return out;
+}
+
+function refreshEditCount(){
+  const n = collectEdits().length;
+  const stale = window.STALE_LABELS || 0;
+  $('editCount').textContent = n + ' change' + (n === 1 ? '' : 's')
+    + (stale ? ' · ' + stale + ' stale override(s) ignored' : '');
+}
+
+$('btnEditText').onclick = () => { editing ? leaveEditMode() : enterEditMode(); };
+
+$('btnEditCancel').onclick = () => { leaveEditMode(); window.location.reload(); };
+
+$('btnEditSave').onclick = async () => {
+  const edits = collectEdits();
+  const btn = $('btnEditSave');
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try{
+    await api('/api/labels', {method:'PUT', headers:{'Content-Type':'application/json'},
+                              body: JSON.stringify(edits)});
+    LABELS = edits;
+    leaveEditMode();
+    banner($('globalError'),'ok',
+      'Wording saved — ' + edits.length + ' change(s). Everyone sees it on their next reload.');
+  }catch(e){
+    banner($('globalError'),'err','Could not save the wording: ' + esc(e.message));
+  }
+  btn.disabled = false; btn.textContent = 'Save wording';
+};
+
+$('btnEditReset').onclick = async () => {
+  if(!window.confirm('Restore the original wording everywhere? Saved changes are discarded.')) return;
+  try{
+    await api('/api/labels', {method:'PUT', headers:{'Content-Type':'application/json'},
+                              body: JSON.stringify([])});
+    window.location.reload();
+  }catch(e){ banner($('globalError'),'err', esc(e.message)); }
+};
+
 document.querySelectorAll('nav.tabs button').forEach(btn => {
   btn.onclick = () => {
     document.querySelectorAll('nav.tabs button').forEach(b => b.classList.toggle('active', b === btn));
@@ -1788,7 +1980,10 @@ $('btnVerify').onclick = async () => {
 /* ---------- boot ---------- */
 async function startApp(){
   applySession();
-  await loadWatchlists();
+  // Before anything else is drawn, so the officer never sees the built-in
+  // wording flash and then change under them.
+  await loadLabels();
+  loadWatchlists();
   await loadRuns();
   if(selectedRun) pollRun();
   if(!window._wlTimer) window._wlTimer = setInterval(loadWatchlists, 8000);
