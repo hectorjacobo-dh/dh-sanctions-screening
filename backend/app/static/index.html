@@ -207,7 +207,7 @@
      leaving edit mode does not move everything else around. -->
 <div id="editBar" class="editbar hide">
   <strong>Editing the wording.</strong>
-  <span class="dim">Click any highlighted text and type. Headings, labels and help text only.</span>
+  <span class="dim">Click any highlighted text and type. Editing a sentence that contains bold or <code>code</code> styling makes the whole sentence plain. Text with links or buttons in it cannot be edited.</span>
   <span class="spacer"></span>
   <span class="dim" id="editCount"></span>
   <button id="btnEditReset" type="button" title="Restore the original wording everywhere">Restore all</button>
@@ -779,17 +779,39 @@ function pathOf(el){
   return parts.join('>');
 }
 
-/* Leaf elements holding their own words. Anything with element children is
-   excluded, so editing a heading cannot swallow the controls beside it. */
+/* Tags that only style a few words inside a sentence. A paragraph containing
+   nothing but these is still one piece of wording, so it is editable as a
+   whole — otherwise a sentence with one bold phrase in it could only be edited
+   in fragments, which is how this first shipped. */
+const INLINE_ONLY = ['STRONG','EM','B','I','SPAN','CODE','SMALL','ABBR','BR'];
+
+/* Tags that do something when clicked. An element containing one is never
+   editable: rewriting its contents would take the link or the control with it. */
+const CONTROLS = ['A','BUTTON','INPUT','SELECT','TEXTAREA','DATALIST','LABEL'];
+
 function editableElements(){
   const wanted = 'h1,h2,h3,h4,label,p,span,div,button,th,strong,em,legend,summary';
+  // Cleared first: the marker below is scratch state for one pass, and leaving
+  // it behind would make the second call disagree with the first.
+  document.querySelectorAll('[data-editable-candidate]')
+    .forEach(el => el.removeAttribute('data-editable-candidate'));
   return Array.from(document.querySelectorAll(wanted)).filter(el => {
     if(isVolatile(el)) return false;
     if(el.closest('#editBar')) return false;
-    if(el.children.length) return false;
-    const text = (el.textContent || '').trim();
-    if(!text || text.length > 400) return false;
     if(el.id && el.id.indexOf('btnEdit') === 0) return false;
+
+    const kids = Array.from(el.children);
+    // Anything interactive inside, at any depth, and it is off limits.
+    if(el.querySelector(CONTROLS.join(','))) return false;
+    // Otherwise allow it if its children are purely decorative.
+    if(kids.some(k => INLINE_ONLY.indexOf(k.tagName) < 0)) return false;
+    // Do not offer both a sentence and the words inside it: editing the
+    // fragment and then the sentence would have the sentence overwrite it.
+    if(el.parentElement && el.parentElement.closest('[data-editable-candidate]')) return false;
+
+    const text = (el.textContent || '').trim();
+    if(!text || text.length > 600) return false;
+    el.setAttribute('data-editable-candidate','1');
     return true;
   });
 }
@@ -831,6 +853,18 @@ function enterEditMode(){
   });
   refreshEditCount();
   document.addEventListener('input', refreshEditCount, true);
+  // Paste arrives as plain text. A contenteditable region otherwise accepts
+  // whatever Word or a web page put on the clipboard — fonts, colours, and
+  // markup — which would be stored and then rendered back into every page.
+  document.addEventListener('paste', pasteAsPlainText, true);
+}
+
+function pasteAsPlainText(event){
+  const target = event.target;
+  if(!target || !target.closest || !target.closest('[data-editable]')) return;
+  event.preventDefault();
+  const text = (event.clipboardData || window.clipboardData).getData('text/plain');
+  document.execCommand('insertText', false, text.replace(/\s+/g, ' ').trim());
 }
 
 function leaveEditMode(){
@@ -844,6 +878,9 @@ function leaveEditMode(){
     el.classList.remove('edited-marker');
   });
   document.removeEventListener('input', refreshEditCount, true);
+  document.removeEventListener('paste', pasteAsPlainText, true);
+  document.querySelectorAll('[data-editable-candidate]')
+    .forEach(el => el.removeAttribute('data-editable-candidate'));
 }
 
 function collectEdits(){
