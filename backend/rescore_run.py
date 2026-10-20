@@ -47,7 +47,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from sqlalchemy import delete, select  # noqa: E402
+from sqlalchemy import delete, func, select  # noqa: E402
 
 from app import matching  # noqa: E402
 from app.audit import record_event  # noqa: E402
@@ -202,14 +202,21 @@ def main() -> int:
     ids_to_delete = [alert.id for alert, _ in removed]
     for start in range(0, len(ids_to_delete), 500):
         db.execute(delete(MatchResult).where(MatchResult.id.in_(ids_to_delete[start:start + 500])))
-    run.total_matches = len(alerts) - len(removed)
+    db.flush()
+    # The headline is the matches at the threshold the run was screened at; the band
+    # beneath it is stored to be revealed, not counted.
+    run.total_matches = db.execute(
+        select(func.count())
+        .select_from(MatchResult)
+        .where(MatchResult.run_id == run.id, MatchResult.base_score >= run.threshold)
+    ).scalar_one()
     db.commit()
 
     record_event(
         db, "RUN_RESCORED", actor="rescore_run.py", entity_ref=run.run_ref,
         payload={
             "case": run.uploaded_filename, "alerts_before": total, "alerts_removed": len(removed),
-            "alerts_after": run.total_matches, "kept_resolved": protected, "kept_orphaned": orphaned,
+            "alerts_after": total - len(removed), "kept_resolved": protected, "kept_orphaned": orphaned,
             "screened_at": run.threshold, "kept_at_or_above": floor, "geo_penalty": args.geo_penalty,
             "acronym_min_batch": matching.ACRONYM_MIN_LEN_BATCH,
             "archive_file": archive.name, "archive_sha256": digest,
