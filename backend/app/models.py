@@ -182,6 +182,11 @@ class ScreeningRun(Base):
     progress: Mapped[float] = mapped_column(Float, default=0.0)
     threshold: Mapped[int] = mapped_column(Integer, default=80)
     strong_threshold: Mapped[int] = mapped_column(Integer, default=95)
+    # The lowest score kept as an alert. The threshold is what is SHOWN by default;
+    # matches between this floor and the threshold are stored too, so the officer can
+    # lower the bar afterwards without screening again. 0 means "same as threshold"
+    # (older runs, which stored nothing below it).
+    score_floor: Mapped[int] = mapped_column(Integer, default=0)
     geo_penalty: Mapped[int] = mapped_column(Integer, default=15)
     # Which subject types this run screened, recorded so the report states the
     # scope of the control that was actually applied.
@@ -253,6 +258,9 @@ class MatchResult(Base):
     listing_reason: Mapped[str] = mapped_column(Text, default="")
     linked_to: Mapped[str] = mapped_column(Text, default="")
     listed_on: Mapped[str] = mapped_column(String(120), default="")
+    # Every published alias of the designation, copied like the other record fields
+    # so the reviewer sees the same "aka" line manual search shows.
+    aliases: Mapped[str] = mapped_column(Text, default="")
     # The published spelling that actually scored, when it was not the primary
     # name. Empty means the primary matched. Without it the report shows a
     # score against a string the reviewer cannot find on the record.

@@ -52,6 +52,7 @@ class ReasonCode(StrEnum):
     GEO_CONFIRMED = "GEO_CONFIRMED"
     GEO_UNKNOWN = "GEO_UNKNOWN_NO_ADJUSTMENT"
     SHORT_NAME = "SHORT_NAME_LOW_CONFIDENCE"
+    COMMON_WORD = "COMMON_WORD_NAME"
 
 
 @dataclass(frozen=True)
@@ -549,6 +550,11 @@ def score_pair(
     if exact_in_batch if not recall_mode else partner_norm == target_norm:
         base = 100.0
         reasons.append(ReasonCode.EXACT_NORMALISED)
+        if not recall_mode and not literal_equal:
+            core = [w for w in set(partner_strict) if not is_generic_token(w)]
+            if len(core) == 1 and TOKEN_FREQUENCY.get(core[0], 0) >= COMMON_WORD_DESIGNATIONS:
+                base = COMMON_WORD_SCORE
+                reasons.append(ReasonCode.COMMON_WORD)
     if acronym_used and acronym >= 85:
         reasons.append(ReasonCode.ACRONYM_BRIDGE)
     if matched_on_alias:
@@ -636,6 +642,36 @@ ALIAS_SCORING_LIMIT = 25
 # The designation's primary name still is, and so is an exact primary match.
 BATCH_ALIAS_LIMIT = 0
 
+# A single word that names MANY different designations is a weak identification:
+# "INTEGRAL" appears in 13 designations, "ANTARES" in 4, "ALBATROS" in 2,
+# "CAMORRA" in 1. An exact match on a one-word core therefore means less the more
+# designations share that word, so it is held just below 100 once ten or more do
+# (and the names are not literally identical). Counted from the watchlist itself,
+# not from a dictionary, so it describes THESE designations; registered whenever
+# the index is built. Empty by default, which leaves the rule inactive.
+# Articles and particles carry no identity of their own: "LA RIVIERA" is one
+# distinctive word, not two. Used when deciding whether an alias is a FULL name.
+FUNCTION_WORDS = frozenset(
+    {
+        "A", "AL", "AND", "DA", "DAS", "DE", "DEL", "DELLA", "DI", "DO", "DOS", "E",
+        "EL", "LA", "LAS", "LE", "LES", "LO", "LOS", "O", "OF", "THE", "Y",
+    }
+)
+
+TOKEN_FREQUENCY: dict[str, int] = {}
+COMMON_WORD_DESIGNATIONS = 10
+COMMON_WORD_SCORE = 97.0
+
+
+def register_token_frequencies(names) -> None:
+    """Count, per word, how many designation names contain it."""
+    counter: dict[str, int] = {}
+    for name in names:
+        for token in set(strict_tokens(name)):
+            counter[token] = counter.get(token, 0) + 1
+    TOKEN_FREQUENCY.clear()
+    TOKEN_FREQUENCY.update(counter)
+
 
 def score_against_all_names(
     query: str,
@@ -691,5 +727,29 @@ def score_against_all_names(
         )
         if candidate.base_score > best.base_score:
             best, matched_name = candidate, alias
+
+    # Batch drops aliases because a nickname or one-word alias is the largest source
+    # of noise (JULIA, LIGA, MARTIN, MLM). But a partner whose name is IDENTICAL to a
+    # full-name alias of a sanctioned party — two or more distinctive words, the
+    # same wording — is not noise, and it is exactly the common-name case that can
+    # genuinely be a sanctioned person. So that one narrow case is kept.
+    if not recall_mode and alias_limit == 0:
+        wanted = tuple(sorted(strict_tokens(query)))
+        distinctive = [
+            w for w in set(wanted) if not is_generic_token(w) and w not in FUNCTION_WORDS
+        ]
+        if wanted and len(distinctive) >= 2:
+            for alias in alias_list:
+                if alias.casefold() == primary_name.casefold():
+                    continue
+                if tuple(sorted(strict_tokens(alias))) != wanted:
+                    continue
+                candidate = score_pair(
+                    query, alias, partner_country, target_geography,
+                    geo_penalty=geo_penalty, recall_mode=recall_mode,
+                    matched_on_alias=True, target_subject_type=target_subject_type,
+                )
+                if candidate.base_score > best.base_score:
+                    best, matched_name = candidate, alias
 
     return best, matched_name

@@ -38,7 +38,7 @@ from ..evidence import verify as verify_evidence
 from ..ingest.runner import active_target_count
 from ..models import EvidenceDocument, MatchResult, ScreeningRun, User, to_local, utcnow
 from ..pdf_report import generate_pdf
-from ..report import collect_dossier, generate_csv, generate_dossier
+from ..report import collect_dossier, generate_csv, generate_xlsx, generate_dossier
 from ..schemas import (
     AdjudicationIn,
     EvidenceOut,
@@ -47,7 +47,7 @@ from ..schemas import (
     StatusOut,
     RunOut,
 )
-from ..screening import MAX_UPLOAD_BYTES, parse_upload, run_screening, sha256_of
+from ..screening import STORAGE_FLOOR, MAX_UPLOAD_BYTES, parse_upload, run_screening, sha256_of
 
 router = APIRouter(prefix="/api/runs", tags=["screening"])
 
@@ -169,6 +169,7 @@ async def create_run(
         uploaded_by=user.email,
         input_sha256=sha256_of(payload),
         threshold=threshold if threshold >= 0 else settings.match_threshold,
+        score_floor=min(threshold if threshold >= 0 else settings.match_threshold, STORAGE_FLOOR),
         strong_threshold=settings.strong_match_threshold,
         geo_penalty=geo_penalty if geo_penalty >= 0 else settings.geo_contradiction_penalty,
         subject_types=subject_types.strip() or settings.screen_subject_types,
@@ -264,8 +265,12 @@ def list_matches(
         filters.append(MatchResult.risk_band == risk_band)
     if decision is not None and decision != "":
         filters.append(MatchResult.decision == decision)
-    if min_score is not None:
-        filters.append(MatchResult.score >= min_score)
+    # The name score, defaulting to the threshold the run was screened at. The bar can
+    # be lowered as far as the stored floor, which is how the officer sees the
+    # 85-94 band without screening again.
+    filters.append(
+        MatchResult.base_score >= (run.threshold if min_score is None else min_score)
+    )
 
     total = db.execute(
         select(func.count(MatchResult.id)).where(*filters)
@@ -630,11 +635,14 @@ def download_evidence(
 
 @router.get("/{run_ref}/due-diligence-record.pdf")
 def download_dossier_pdf(
-    run_ref: str, db: Session = Depends(get_db), user: User = Depends(current_user)
+    run_ref: str,
+    min_score: float | None = Query(default=None, ge=0, le=100),
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
 ) -> Response:
     """The due-diligence record as a PDF — the version you hand to someone."""
     run = _get_run(db, run_ref)
-    data = collect_dossier(db, run)
+    data = collect_dossier(db, run, min_score)
     payload = generate_pdf(data)
 
     record_event(
@@ -663,14 +671,17 @@ def download_dossier_pdf(
 
 @router.get("/{run_ref}/report.csv")
 def download_report(
-    run_ref: str, db: Session = Depends(get_db), user: User = Depends(current_user)
+    run_ref: str,
+    min_score: float | None = Query(default=None, ge=0, le=100),
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
 ) -> StreamingResponse:
     """Download the immutable adjudication report."""
     run = _get_run(db, run_ref)
     if run.status != "completed":
         raise HTTPException(409, f"Run is '{run.status}'; report available once completed.")
 
-    csv_text = generate_csv(db, run)
+    csv_text = generate_csv(db, run, min_score)
     record_event(
         db,
         "REPORT_EXPORTED",
@@ -691,5 +702,39 @@ def download_report(
     return StreamingResponse(
         iter([csv_text]),
         media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/{run_ref}/report.xlsx")
+def download_report_xlsx(
+    run_ref: str,
+    min_score: float | None = Query(default=None, ge=0, le=100),
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> Response:
+    """The adjudication report as an Excel workbook, with the full published record."""
+    run = _get_run(db, run_ref)
+    if run.status != "completed":
+        raise HTTPException(409, f"Run is '{run.status}'; report available once completed.")
+
+    payload = generate_xlsx(db, run, min_score)
+    record_event(
+        db,
+        "REPORT_EXPORTED",
+        actor=user.email,
+        entity_ref=run.run_ref,
+        payload={
+            "format": "xlsx",
+            "shown_at_or_above": run.threshold if min_score is None else min_score,
+            "export_sha256": sha256_of(payload),
+        },
+    )
+    local = to_local(run.completed_at)
+    stamp = local.strftime("%Y-%m-%d_%H%M_Berlin") if local else "pending"
+    filename = f"DH_Sanctions_Adjudication_{stamp}_{run.run_ref[:8]}.xlsx"
+    return Response(
+        content=payload,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

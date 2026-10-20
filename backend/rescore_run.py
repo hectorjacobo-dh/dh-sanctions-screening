@@ -53,7 +53,12 @@ from app import matching  # noqa: E402
 from app.audit import record_event  # noqa: E402
 from app.database import SessionLocal  # noqa: E402
 from app.ingest.runner import active_refresh_ids  # noqa: E402
-from app.matching import BATCH_ALIAS_LIMIT, band_for, score_against_all_names  # noqa: E402
+from app.matching import (  # noqa: E402
+    BATCH_ALIAS_LIMIT,
+    band_for,
+    register_token_frequencies,
+    score_against_all_names,
+)
 from app.models import MatchResult, ScreeningRun, WatchlistTarget, utcnow  # noqa: E402
 
 ARCHIVE_COLUMNS = [
@@ -102,6 +107,7 @@ def main() -> int:
     print(f"run {run.id}: {run.uploaded_filename}  screened at {run.threshold}%  "
           f"keeping alerts scoring >= {floor}  country penalty={args.geo_penalty}")
     print(f"active designations available to re-score against: {len(targets):,}")
+    register_token_frequencies(t.target_name for t in targets.values())
 
     alerts = db.execute(select(MatchResult).where(MatchResult.run_id == run.id)).scalars().all()
     kept, removed, protected, orphaned = [], [], 0, 0

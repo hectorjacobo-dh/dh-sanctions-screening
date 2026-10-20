@@ -52,12 +52,14 @@ REPORT_COLUMNS = [
     # --- Sanctions list information ---
     "Target_Name",
     "Matched_Spelling",
+    "Aliases",
     "Subject_Type",
     "Entity_Type",
     "Sanctions_Program",
     "Remarks",
     "Source_List",
     "Geography",
+    "Country_Check",
     "DOB",
     # The identity the officer weighed, and the grounds the regulator gave.
     # Absent from the report, a reviewer cannot tell whether a dismissal was
@@ -73,6 +75,7 @@ REPORT_COLUMNS = [
     "Listed_On",
     "Watchlist_ID",
     # --- Engine output ---
+    "Name_Match",
     "Match_Score",
     "Base_Score",
     "Geo_Adjustment",
@@ -138,16 +141,37 @@ def _evidence_by_match(db: Session, run: ScreeningRun) -> dict[int, list[Evidenc
     return grouped
 
 
-def generate_csv(db: Session, run: ScreeningRun) -> str:
-    """Render the full adjudication report for a completed run."""
-    evidence = _evidence_by_match(db, run)
-    buffer = io.StringIO(newline="")
-    writer = csv.writer(buffer, quoting=csv.QUOTE_ALL, lineterminator="\r\n")
-    writer.writerow(REPORT_COLUMNS)
+def _country_check(reason_codes: str) -> str:
+    """The country comparison as one word, from what the engine recorded."""
+    codes = reason_codes or ""
+    if "GEO_CONTRADICTION" in codes:
+        return "differs"
+    if "GEO_CONFIRMED" in codes:
+        return "matches"
+    return "unknown"
 
+
+def _csv_safe(value):
+    """Stop a spreadsheet treating text as a formula.
+
+    Partner names come from an uploaded file, so a legal name beginning "=" or
+    "@" would run as a formula in Excel when an officer opens this report.
+    """
+    if isinstance(value, str) and value[:1] in ("=", "+", "@", "\t", "\r"):
+        return "'" + value
+    if isinstance(value, str) and value[:1] == "-" and value[1:2] and not value[1:2].isdigit():
+        return "'" + value
+    return value
+
+
+def iter_report_rows(db: Session, run: ScreeningRun, min_score: float | None = None):
+    """Every alert at or above ``min_score`` (default: the run's threshold), as the
+    same row for CSV and Excel, so the two can never disagree."""
+    floor = run.threshold if min_score is None else min_score
+    evidence = _evidence_by_match(db, run)
     stmt = (
         select(MatchResult)
-        .where(MatchResult.run_id == run.id)
+        .where(MatchResult.run_id == run.id, MatchResult.base_score >= floor)
         .order_by(
             MatchResult.region.asc(),
             MatchResult.score.desc(),
@@ -156,10 +180,8 @@ def generate_csv(db: Session, run: ScreeningRun) -> str:
         )
         .execution_options(yield_per=1000)
     )
-
     for match in db.execute(stmt).scalars():
-        writer.writerow(
-            [
+        yield [
                 match.grid,
                 match.counterparty_group,
                 match.brand,
@@ -173,12 +195,14 @@ def generate_csv(db: Session, run: ScreeningRun) -> str:
                 match.screened_field,
                 match.target_name,
                 match.matched_alias or match.target_name,
+                match.aliases,
                 match.subject_type,
                 match.entity_type,
                 match.sanctions_program,
                 match.remarks,
                 match.source,
                 match.geography,
+                _country_check(match.reason_codes),
                 match.dob,
                 match.nationality,
                 match.place_of_birth,
@@ -189,6 +213,7 @@ def generate_csv(db: Session, run: ScreeningRun) -> str:
                 match.linked_to,
                 match.listed_on,
                 match.watchlist_id,
+                "Exact" if match.base_score >= 100 else "Partial",
                 f"{match.score:.2f}",
                 f"{match.base_score:.2f}",
                 f"{match.geo_adjustment:.2f}",
@@ -211,10 +236,60 @@ def generate_csv(db: Session, run: ScreeningRun) -> str:
                 _snapshot_digest(run, match.source),
                 str(run.threshold),
                 run.subject_types,
-            ]
-        )
+        ]
 
+
+def generate_csv(db: Session, run: ScreeningRun, min_score: float | None = None) -> str:
+    """Render the adjudication report for a completed run."""
+    buffer = io.StringIO(newline="")
+    writer = csv.writer(buffer, quoting=csv.QUOTE_ALL, lineterminator="\r\n")
+    writer.writerow(REPORT_COLUMNS)
+    for row in iter_report_rows(db, run, min_score):
+        writer.writerow([_csv_safe(cell) for cell in row])
     return buffer.getvalue()
+
+
+def generate_xlsx(db: Session, run: ScreeningRun, min_score: float | None = None) -> bytes:
+    """The same report as a workbook, which is how most reviewers will open it.
+
+    Header frozen and filterable, long text wrapped, and every cell stored as
+    text so nothing in an uploaded name can be evaluated as a formula.
+    """
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Adjudication"
+    sheet.append(REPORT_COLUMNS)
+    for cell in sheet[1]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="1F3A5F")
+        cell.alignment = Alignment(vertical="center", wrap_text=True)
+
+    for row in iter_report_rows(db, run, min_score):
+        sheet.append(["" if value is None else value for value in row])
+    for line in sheet.iter_rows(min_row=2):
+        for cell in line:
+            if isinstance(cell.value, str):
+                cell.data_type = "s"
+
+    long_text = {"Aliases", "Listing_Reason", "Remarks", "Identity_Documents",
+                 "Comment / Notes", "Linked_To", "Position"}
+    for index, name in enumerate(REPORT_COLUMNS, start=1):
+        letter = get_column_letter(index)
+        wide = name in long_text
+        sheet.column_dimensions[letter].width = 60 if wide else min(max(len(name) + 4, 14), 34)
+        if wide:
+            for cell in sheet[letter][1:]:
+                cell.alignment = Alignment(wrap_text=True, vertical="top")
+    sheet.freeze_panes = "A2"
+    sheet.auto_filter.ref = sheet.dimensions
+
+    stream = io.BytesIO()
+    workbook.save(stream)
+    return stream.getvalue()
 
 
 # ---------------------------------------------------------------------------
@@ -270,12 +345,15 @@ class DossierData:
     chain: dict
 
 
-def collect_dossier(db: Session, run: ScreeningRun) -> DossierData:
+def collect_dossier(
+    db: Session, run: ScreeningRun, min_score: float | None = None
+) -> DossierData:
+    floor = run.threshold if min_score is None else min_score
     evidence = _evidence_by_match(db, run)
     matches = list(
         db.execute(
             select(MatchResult)
-            .where(MatchResult.run_id == run.id)
+            .where(MatchResult.run_id == run.id, MatchResult.base_score >= floor)
             .order_by(
                 MatchResult.decision.asc(),
                 MatchResult.score.desc(),

@@ -152,6 +152,7 @@
   tr.grp-rest td:nth-child(2) .dim{font-size:12px}
   .grpbadge{display:inline-block;margin-top:3px;font-size:11px;padding:1px 7px;border-radius:9px;
     background:rgba(37,99,235,.14);color:var(--accent)}
+  .rec{padding:10px 14px 12px;border-bottom:1px solid var(--border);font-size:13px}
   .matchedon{font-size:12.5px;color:var(--warn);margin:2px 0}
   .reasonval{font-size:13px;padding:7px 0;font-weight:600}
   .rmx tbody tr.on td.rl{color:#fff}
@@ -367,8 +368,9 @@
       </div>
       <div class="row" style="margin-top:14px;align-items:flex-end">
         <div style="width:230px">
-          <label class="dim" style="font-size:13px">Match threshold: <strong id="thVal">80%</strong></label>
-          <input type="range" id="th" min="60" max="100" value="80" />
+          <label class="dim" style="font-size:13px">Match threshold: <strong id="thVal">95%</strong></label>
+          <input type="range" id="th" min="60" max="100" value="95" />
+          <div class="dim" style="font-size:11.5px">Matches down to 80% are kept, so the bar can be lowered afterwards.</div>
         </div>
         <div style="width:230px">
           <label class="dim" style="font-size:13px">Geographic de-prioritisation: <strong id="geoVal">off</strong></label>
@@ -1586,6 +1588,65 @@ function groupInfo(items){
   return info;
 }
 
+/* ------------------------------------------------------------------
+   The threshold bar for a finished run.
+
+   Matches are stored from the run's floor upward, and the bar chooses how many
+   are SHOWN, exactly as in manual search. Moving it down reveals the band
+   beneath the threshold without screening again; the exports follow the bar.
+   ------------------------------------------------------------------ */
+let viewMin = {};
+function shownMin(run){
+  return Object.prototype.hasOwnProperty.call(viewMin, run.run_ref)
+    ? viewMin[run.run_ref] : run.threshold;
+}
+
+/* The published record, as manual search draws it, so a case can be dismissed
+   from the alert itself without searching again. */
+function recordLines(m){
+  const lines = [
+    pubLine('Date of birth', m.dob),
+    pubLine('Nationality', m.nationality),
+    pubLine('Place of birth', m.place_of_birth),
+    pubLine('Gender', m.gender),
+    pubLine('Address country', m.geography),
+    pubLine('Documents', m.identifiers)
+  ].join('');
+  return lines
+    || '<div class="dim" style="font-size:11.5px">This designation carries no identity detail beyond the name.</div>';
+}
+
+/* What the alert was compared on. A batch file usually holds a name and a
+   country and nothing else, and saying so is the honest alternative to a row
+   of pills that each look like a finding. */
+function batchComparison(m){
+  const codes = m.reason_codes || '';
+  const country = codes.includes('GEO_CONTRADICTION') ? 'differs'
+                : codes.includes('GEO_CONFIRMED') ? 'matches' : 'unknown';
+  const exact = m.base_score >= 100;
+  const rows = [
+    ['Name', exact
+      ? 'identical wording (legal form ignored)'
+      : `partial — ${Math.round(m.base_score)}% of the words in common`],
+    ['Matched on', m.matched_alias ? `the alias “${m.matched_alias}”` : 'the primary name'],
+    ['Country', `your file: ${m.account_country || 'not given'} · designation: ${m.geography || 'not published'} — ${country}`]
+  ];
+  if(m.tax_id) rows.push(['Tax ID in your file', m.tax_id]);
+  const thin = !m.tax_id && !m.ubo_name;
+  return rows.map(([k, v]) => pubLine(k, v)).join('')
+    + (thin ? `<div class="dim" style="font-size:11.5px;margin-top:4px">Your file holds a name and country only —
+       no date of birth, nationality or document number — so nothing further can corroborate
+       or rule out this hit. Judge it on the published record.</div>` : '');
+}
+
+function panelRecord(m){
+  return `<div class="rec">
+    <div class="whyh">Why this party is listed</div>${whyCell(m)}
+    ${m.aliases ? `<div class="whym" style="margin-top:6px">${pubLine('Also known as', m.aliases)}</div>` : ''}
+    <div class="whyh" style="margin-top:10px">Compared with your file</div>${batchComparison(m)}
+  </div>`;
+}
+
 async function renderRun(run){
   // The rows are built from STATUSES — the status dropdown's options and the
   // reason label both come from it. It used to be fetched lazily, only when a
@@ -1595,7 +1656,9 @@ async function renderRun(run){
   // was right; the screen said otherwise, which is the worse failure.
   await loadReasons();
 
-  const q = new URLSearchParams({limit: LIMIT, offset});
+  const shown = shownMin(run);
+  const floor = Math.min(run.score_floor || run.threshold, run.threshold);
+  const q = new URLSearchParams({limit: LIMIT, offset, min_score: shown});
 
   let page;
   try{ page = await api(`/api/runs/${run.run_ref}/matches?${q}`); }
@@ -1620,12 +1683,13 @@ async function renderRun(run){
       ${m.matched_alias
         ? `<div class="matchedon" title="The published spelling this name was actually compared with">matched on <b>“${esc(m.matched_alias)}”</b></div>`
         : ''}
+      ${m.aliases ? `<div class="dim" style="font-size:11.5px">aka ${esc(m.aliases.slice(0,150))}${m.aliases.length > 150 ? '…' : ''}</div>` : ''}
       <div class="dim">${esc(m.sanctions_program)}</div>
       <div class="rc">${(m.reason_codes||'').split(',').filter(Boolean).map(c=>`<span>${esc(chipLabel(c))}</span>`).join('')}</div>
     </td>
     <td><span class="badge weak">${esc(m.subject_type||'Unknown')}</span></td>
     <td>${esc(m.source)}<div class="dim mono">${esc(m.watchlist_id)}</div></td>
-    <td class="dim">${esc(m.geography || '—')}</td>
+    <td class="pub">${recordLines(m)}</td>
     <td>
       <select data-f="decision">${STATUSES.map(st=>`<option value="${esc(st.value)}"${st.value===m.decision?' selected':''}>${esc(st.label)}</option>`).join('')}</select>
       ${m.decided_by ? `<div class="dim mono" style="margin-top:4px">${esc(m.decided_by)}</div>` : ''}
@@ -1646,15 +1710,25 @@ async function renderRun(run){
       <div>
         <h2>${esc(run.uploaded_filename)}</h2>
         <p class="sub" style="margin:0">
-          ${nf(run.total_matches)} alerts from ${nf(run.total_rows)} rows
-          (${nf(run.distinct_names)} distinct names) · threshold ${run.threshold}% ·
+          ${nf(page.total)} match${page.total === 1 ? '' : 'es'} at or above ${shown}% from ${nf(run.total_rows)} rows
+          (${nf(run.distinct_names)} distinct names) · screened at ${run.threshold}% ·
           run <span class="mono">${esc(run.run_ref.slice(0,8))}</span>
         </p>
       </div>
       <div class="row" style="gap:8px">
         <button class="primary" id="btnDossier">Due diligence record (PDF)</button>
+        <button id="btnXlsx">Adjudication report (Excel)</button>
         <button id="btnReport">Adjudication report (CSV)</button>
       </div>
+    </div>
+
+    <div class="row" style="margin-top:12px;gap:14px;align-items:center;flex-wrap:wrap">
+      <label class="dim" style="font-size:13px">Show matches at or above
+        <strong id="viewMinVal">${shown}%</strong></label>
+      <input type="range" id="viewMin" min="${floor}" max="100" value="${shown}" style="max-width:260px" />
+      <span class="dim" style="font-size:12px">${floor < run.threshold
+        ? `Matches down to ${floor}% were kept, so you can lower the bar without screening again.`
+        : `This case stored only matches at or above ${run.threshold}%.`}</span>
     </div>
 
     ${page.items.length ? `<div class="savebar" id="savebar">
@@ -1670,7 +1744,7 @@ async function renderRun(run){
       <span class="dim" id="resolvedCount" style="font-size:12px"></span>
     </div>
     <div class="tw"><table>
-      <thead><tr><th>Score</th><th>Partner</th><th>Designated target</th><th>Type</th><th>Source</th><th>Geography</th><th>Status</th><th>Reason</th><th>Saved</th><th></th></tr></thead>
+      <thead><tr><th>Score</th><th>Partner</th><th>Designated target</th><th>Type</th><th>Source</th><th>Published record</th><th>Status</th><th>Reason</th><th>Saved</th><th></th></tr></thead>
       <tbody id="mBody">${rows}</tbody>
     </table></div>
     <div class="row between" style="margin-top:12px">
@@ -1680,10 +1754,21 @@ async function renderRun(run){
     </div>` : '<div class="empty">No alerts in this case.</div>'}
   </div>`;
 
-  $('btnReport').onclick = () => downloadReport(run.run_ref);
+  // The exports follow the bar: what is on screen is what is downloaded.
+  $('btnReport').onclick = () => downloadFile(
+    `/api/runs/${run.run_ref}/report.csv?min_score=${shown}`,
+    `DH_Adjudication_${run.run_ref.slice(0,8)}.csv`);
+  $('btnXlsx').onclick = () => downloadFile(
+    `/api/runs/${run.run_ref}/report.xlsx?min_score=${shown}`,
+    `DH_Adjudication_${run.run_ref.slice(0,8)}.xlsx`);
   $('btnDossier').onclick = () => downloadFile(
-    `/api/runs/${run.run_ref}/due-diligence-record.pdf`,
+    `/api/runs/${run.run_ref}/due-diligence-record.pdf?min_score=${shown}`,
     `DH_Due_Diligence_Record_${run.run_ref.slice(0,8)}.pdf`);
+  const bar = $('viewMin');
+  if(bar){
+    bar.oninput = () => { $('viewMinVal').textContent = bar.value + '%'; };
+    bar.onchange = () => { viewMin[run.run_ref] = Number(bar.value); offset = 0; renderRun(run); };
+  }
   if($('pPrev')) $('pPrev').onclick = () => { offset = Math.max(0, offset-LIMIT); renderRun(run); };
   if($('pNext')) $('pNext').onclick = () => { offset += LIMIT; renderRun(run); };
 
@@ -1735,7 +1820,7 @@ function reasonText(decision){
 function renderPanel(runRef, m){
   const cell = document.querySelector(`tr[data-detail="${m.id}"] > td`);
   if(!cell) return;
-  cell.innerHTML = `<div class="adj">
+  cell.innerHTML = `${panelRecord(m)}<div class="adj">
     <div>
       <h4>Resolution</h4>
       <table class="rmx"><thead><tr><th>Status</th><th>Risk level</th></tr></thead>

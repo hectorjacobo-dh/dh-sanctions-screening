@@ -22,14 +22,20 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from itertools import chain
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .audit import record_event
 from .blocking import BlockingIndex
 from .config import get_settings
 from .geography import resolve_region
-from .matching import BATCH_ALIAS_LIMIT, band_for, score_against_all_names, score_pair
+from .matching import (
+    BATCH_ALIAS_LIMIT,
+    band_for,
+    register_token_frequencies,
+    score_against_all_names,
+    score_pair,
+)
 from .models import MatchResult, ScreeningRun, WatchlistTarget, utcnow
 from .ingest.runner import active_refresh_ids, active_snapshot
 from .normalize import normalize_name
@@ -53,6 +59,12 @@ _COLUMN_MAP: dict[str, tuple[str, ...]] = {
 }
 
 MAX_UPLOAD_BYTES = 512 * 1024 * 1024
+
+# Alerts are stored from this score upward, whatever threshold the run was
+# screened at. The threshold chooses what is SHOWN; keeping the band beneath it
+# means the bar can be lowered afterwards — as in manual search — without
+# repeating a screening that takes the better part of an hour.
+STORAGE_FLOOR = 80
 
 
 def _canonical_header(name: str) -> str:
@@ -555,6 +567,7 @@ def _load_targets(db: Session) -> tuple[dict[int, _Target], BlockingIndex]:
                     index.add(row.id, alias)
 
     index.finalise(len(targets))
+    register_token_frequencies(t.name for t in targets.values())
     return targets, index
 
 
@@ -604,6 +617,7 @@ def run_screening(
         db.commit()
 
         allowed_subjects = {s.strip() for s in (run.subject_types or "").split(",") if s.strip()}
+        store_floor = min(run.score_floor or run.threshold, run.threshold)
 
         total_groups = len(groups)
         alerts: list[MatchResult] = []
@@ -645,7 +659,7 @@ def run_screening(
                         target_subject_type=target.subject_type,
                         alias_limit=BATCH_ALIAS_LIMIT,
                     )
-                    if breakdown.base_score >= run.threshold:
+                    if breakdown.base_score >= store_floor:
                         scored.append((target, breakdown, matched_name))
 
                 if scored:
@@ -679,6 +693,7 @@ def run_screening(
                                     # designation as it stood when the officer
                                     # adjudicated must stay legible after the
                                     # regulator amends or delists the party.
+                                    aliases=target.aliases[:4000],
                                     nationality=target.nationality,
                                     place_of_birth=target.place_of_birth,
                                     gender=target.gender[:40],
@@ -726,7 +741,13 @@ def run_screening(
             db.commit()
             matches_written += len(alerts)
 
-        run.total_matches = matches_written
+        # The headline count is the alerts that meet the threshold the run was screened
+        # at; the band beneath it is there to be revealed, not to inflate the number.
+        run.total_matches = db.execute(
+            select(func.count())
+            .select_from(MatchResult)
+            .where(MatchResult.run_id == run.id, MatchResult.base_score >= run.threshold)
+        ).scalar_one()
         run.status = "completed"
         run.progress = 100.0
         run.completed_at = utcnow()

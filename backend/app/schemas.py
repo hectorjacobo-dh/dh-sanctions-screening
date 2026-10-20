@@ -79,6 +79,7 @@ class RunOut(BaseModel):
     progress: float
     threshold: int
     strong_threshold: int
+    score_floor: int = 0
     geo_penalty: int
     subject_types: str
     total_rows: int
@@ -107,6 +108,17 @@ class MatchOut(BaseModel):
     # The published spelling this name was actually scored against, when it was
     # an alias rather than the primary. Empty when the primary name matched.
     matched_alias: str = ""
+    # The designation as published: the same record manual search shows, so a
+    # case can be dismissed from the alert itself without searching again.
+    aliases: str = ""
+    nationality: str = ""
+    place_of_birth: str = ""
+    gender: str = ""
+    position: str = ""
+    identifiers: str = ""
+    listing_reason: str = ""
+    linked_to: str = ""
+    listed_on: str = ""
     subject_type: str
     entity_type: str
     sanctions_program: str

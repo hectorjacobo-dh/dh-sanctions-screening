@@ -439,6 +439,8 @@ def generate_pdf(data: DossierData) -> bytes:
                 )
             if m.matched_alias:
                 pdf.field("Matched spelling", m.matched_alias)
+            if m.aliases:
+                pdf.field("Also known as", m.aliases[:700])
             if m.reason_codes:
                 pdf.field("Engine reasons", m.reason_codes.replace(",", ", "))
 

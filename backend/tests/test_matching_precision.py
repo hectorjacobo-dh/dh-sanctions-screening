@@ -404,3 +404,69 @@ def test_a_one_letter_slip_in_a_long_word_is_not_a_95_match() -> None:
     """SIBERIA / SIBERICA are 93% alike letter for letter and are different
     words; at a 95% screen they must not appear."""
     assert _score("Siberia Spa", "SIBERICA OY", kind="Entity") < 95
+
+
+# ---------------------------------------------------------------------------
+# Common names that can genuinely be sanctioned; and a weaker one-word core
+# ---------------------------------------------------------------------------
+
+
+def test_a_full_name_alias_that_is_identical_still_alerts_in_batch() -> None:
+    """Dropping aliases also dropped the case that matters most: a partner whose
+    name is identical to a FULL-NAME alias of a sanctioned individual. Common
+    names can genuinely be sanctioned people. A nickname is still ignored."""
+    breakdown, matched = _batch(
+        "Adnan Hasan Ahmed", "AHMED, Adnan S. Hasan", aliases="Adnan Hasan Ahmed / ABU ADNAN",
+        kind="Individual",
+    )
+    assert matched == "Adnan Hasan Ahmed"
+    assert breakdown.base_score == 100.0
+
+
+def test_an_article_does_not_make_a_nickname_a_full_name() -> None:
+    """"LA RIVIERA" is one distinctive word, not two."""
+    breakdown, matched = _batch(
+        "LA RIVIERA LTDA", "GRUPO WISA, S.A.", aliases="LA RIVIERA", kind="Entity"
+    )
+    assert breakdown.base_score < THRESHOLD
+    assert matched == "GRUPO WISA, S.A."
+
+
+def test_a_one_word_alias_is_still_ignored() -> None:
+    breakdown, _ = _batch(
+        "JULIA HOLDING E.I.R.L.", "FERNANDEZ VALENCIA, Guadalupe", aliases="JULIA", kind="Individual"
+    )
+    assert breakdown.base_score < THRESHOLD
+
+
+def test_a_one_word_name_shared_by_many_designations_is_held_below_100() -> None:
+    """INTEGRAL names 13 designations; ANTARES 4, ALBATROS 2, CAMORRA 1. A match on
+    a one-word core means less the more designations share the word, so past ten
+    it is held at 97 — unless the names are literally identical."""
+    from app import matching
+
+    saved = dict(matching.TOKEN_FREQUENCY)
+    try:
+        matching.TOKEN_FREQUENCY.clear()
+        matching.TOKEN_FREQUENCY.update({"INTEGRAL": 13, "ANTARES": 4, "ALBATROS": 2, "CAMORRA": 1})
+        assert _score("INTEGRAL S. A. S.", "JSC Integral", kind="Entity") == 97.0
+        assert _score("Antares", "ANTARES OOO", kind="Entity") == 100.0
+        assert _score("Albatros S.A", "ALBATROS OOO", kind="Entity") == 100.0
+        assert _score("CAMORRA S. A. S.", "CAMORRA", kind="Entity") == 100.0
+        # Literally the same name is the same name, however common the word.
+        assert _score("Integral", "INTEGRAL", kind="Entity") == 100.0
+    finally:
+        matching.TOKEN_FREQUENCY.clear()
+        matching.TOKEN_FREQUENCY.update(saved)
+
+
+def test_the_common_word_rule_is_inactive_until_frequencies_are_registered() -> None:
+    """With no watchlist loaded there is nothing to count, so nothing is held back."""
+    from app import matching
+
+    saved = dict(matching.TOKEN_FREQUENCY)
+    try:
+        matching.TOKEN_FREQUENCY.clear()
+        assert _score("INTEGRAL S. A. S.", "JSC Integral", kind="Entity") == 100.0
+    finally:
+        matching.TOKEN_FREQUENCY.update(saved)
