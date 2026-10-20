@@ -487,6 +487,23 @@ def band_for(breakdown: ScoreBreakdown, threshold: int, strong_threshold: int) -
 # system was built to meet.
 ALIAS_SCORING_LIMIT = 25
 
+# Batch screening does NOT score aliases. A published alias ("a.k.a.") is often a
+# single common word, a nickname or a short form, and a partner file holds tens
+# of thousands of names that collapse to exactly such a word once the legal form
+# and generic words are stripped: "JULIA HOLDING E.I.R.L." becomes JULIA, which
+# equals a person's alias and scored 100 against an unrelated individual; "LIGA
+# GROUP", "MARTIN LTDA", "MLM S.R.L." and "LA RIVIERA LTDA" did the same. Across
+# one 83,642-name file this was the largest remaining source of noise, and a
+# score of 100 on names that visibly differ cannot be defended to an officer.
+#
+# Manual search keeps aliases: an officer types one name on purpose and reads
+# every row, so a nickname hit is information there and not noise.
+#
+# The cost is real and belongs on the record: a partner whose legal name equals
+# a designation's genuine alias, and nothing else about it, is no longer raised.
+# The designation's primary name still is, and so is an exact primary match.
+BATCH_ALIAS_LIMIT = 0
+
 
 def score_against_all_names(
     query: str,

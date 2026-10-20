@@ -257,3 +257,24 @@ acronym bridge" and was wrong. A short-name cap sat *after* the acronym and
 pushed every acronym match below the 95% threshold, which looked like the rule
 working. Moving the cap exposed 461 of them. When a number looks too good,
 change one thing at a time and re-measure.
+
+### Alias matching is off in batch, on in manual search
+
+`BATCH_ALIAS_LIMIT = 0` in `app/matching.py`. A published alias is often one
+common word or a nickname, and tens of thousands of partner names collapse to
+exactly such a word once the legal form and generic words are stripped
+("JULIA HOLDING E.I.R.L." -> JULIA). In an 83,642-name file this was the largest
+remaining source of noise: of 565 alerts, 285 rested on an alias alone.
+
+The cost is a real one: a partner whose legal name equals a designation's
+genuine alias, and nothing else, is no longer raised in batch. 167 of the 285
+removed had a multi-word alias, the kind most likely to be a real hit; they sit
+in `data/rescore-removed-run9-*.csv` for review. If that trade-off is revisited,
+the middle path is to keep aliases of two or more distinctive words.
+
+Dropping aliases exposed an older fault: `acronyms_of` knew the abbreviation
+"PJSC" but not the written-out "PUBLIC JOINT STOCK COMPANY", so from OFAC's
+primary name for United Aircraft Corporation it built PJSCUAC and never UAC. The
+match had only ever worked through an alias. Fixed in `normalize.py`, narrowly:
+the spelled-out prefixes are consulted when building acronyms only, not in
+name normalisation, which would have changed scoring for every name.

@@ -29,7 +29,7 @@ from .audit import record_event
 from .blocking import BlockingIndex
 from .config import get_settings
 from .geography import resolve_region
-from .matching import band_for, score_against_all_names, score_pair
+from .matching import BATCH_ALIAS_LIMIT, band_for, score_against_all_names, score_pair
 from .models import MatchResult, ScreeningRun, WatchlistTarget, utcnow
 from .ingest.runner import active_refresh_ids, active_snapshot
 from .normalize import normalize_name
@@ -643,6 +643,7 @@ def run_screening(
                         target.geography,
                         geo_penalty=run.geo_penalty,
                         target_subject_type=target.subject_type,
+                        alias_limit=BATCH_ALIAS_LIMIT,
                     )
                     if breakdown.base_score >= run.threshold:
                         scored.append((target, breakdown, matched_name))

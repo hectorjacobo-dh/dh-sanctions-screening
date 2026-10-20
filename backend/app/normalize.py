@@ -158,6 +158,38 @@ def _strip_prefixes(tokens: list[str]) -> list[str]:
     return tokens
 
 
+# Legal forms written out in full. The regulators publish the long legal name
+# ("PUBLIC JOINT STOCK COMPANY UNITED AIRCRAFT CORPORATION"), while people use
+# and index the abbreviation ("PJSC UAC", "UAC"). LEGAL_PREFIXES knows PJSC but
+# not the spelled-out phrase, so from the primary name only PJSCUAC could be
+# built and "UAC" was reachable solely through an alias. That held until
+# aliases were dropped from batch screening.
+#
+# Deliberately NOT added to LEGAL_PREFIXES: that set also drives name
+# normalisation, so adding to it would change scoring for every name. This set
+# is consulted only when building acronym readings.
+_SPELLED_LEGAL_PREFIXES: frozenset[tuple[str, ...]] = frozenset(
+    {
+        ("PUBLIC", "JOINT", "STOCK", "COMPANY"),
+        ("OPEN", "JOINT", "STOCK", "COMPANY"),
+        ("CLOSED", "JOINT", "STOCK", "COMPANY"),
+        ("JOINT", "STOCK", "COMPANY"),
+        ("LIMITED", "LIABILITY", "COMPANY"),
+        ("PUBLIC", "LIMITED", "COMPANY"),
+        ("SOCIETE", "ANONYME"),
+        ("OBSCHESTVO", "S", "OGRANICHENNOJ", "OTVETSTVENNOSTJU"),
+    }
+)
+_MAX_SPELLED_PREFIX_TOKENS = max(len(p) for p in _SPELLED_LEGAL_PREFIXES)
+
+
+def _strip_spelled_prefixes(tokens: list[str]) -> list[str]:
+    for size in range(min(_MAX_SPELLED_PREFIX_TOKENS, len(tokens) - 1), 0, -1):
+        if tuple(tokens[:size]) in _SPELLED_LEGAL_PREFIXES:
+            return tokens[size:]
+    return tokens
+
+
 def _strip_suffixes(tokens: list[str]) -> list[str]:
     changed = True
     while changed and len(tokens) > 1:
@@ -234,11 +266,16 @@ def acronyms_of(value: str | None) -> frozenset[str]:
         return frozenset()
 
     tokens = _collapse_initial_runs(base.split())
+    # A spelled-out legal form is removed first, so the abbreviated and the
+    # written-out spellings of the same company yield the same readings.
+    unspelled = _strip_spelled_prefixes(list(tokens))
     views = {
         tuple(tokens),
         tuple(_strip_prefixes(list(tokens))),
         tuple(_strip_suffixes(list(tokens))),
         tuple(_strip_suffixes(_strip_prefixes(list(tokens)))),
+        tuple(_strip_prefixes(list(unspelled))),
+        tuple(_strip_suffixes(_strip_prefixes(list(unspelled)))),
     }
     return frozenset(a for a in (_initials(v) for v in views) if a)
 

@@ -571,7 +571,7 @@ _UAC_PRIMARY = "PUBLIC JOINT STOCK COMPANY UNITED AIRCRAFT CORPORATION"
 _UAC_ALIASES = "UNITED AIRCRAFT CORPORATION / PJSC UAC / PUBLICHNOE AKTSIONERNOE OBSCHESTVO"
 
 
-def test_acronym_reaches_the_designation_through_its_alias() -> None:
+def test_acronym_reaches_the_designation_in_manual_search() -> None:
     from app.matching import score_against_all_names
 
     breakdown, matched = score_against_all_names(
@@ -579,22 +579,27 @@ def test_acronym_reaches_the_designation_through_its_alias() -> None:
     )
     assert breakdown.base_score >= 85, (
         f"UAC scored {breakdown.base_score:.1f}; the acronym bridge must reach "
-        "the alias 'UNITED AIRCRAFT CORPORATION'"
+        "United Aircraft Corporation"
     )
-    assert matched == "UNITED AIRCRAFT CORPORATION"
+    # Reached through the primary name now, as well as through its aliases.
+    assert matched in (_UAC_PRIMARY, "UNITED AIRCRAFT CORPORATION", "PJSC UAC")
 
 
-def test_scoring_the_primary_alone_is_what_failed() -> None:
-    """Pins the defect, so a refactor that drops alias scoring fails here."""
-    from app.matching import score_against_all_names, score_pair
+def test_the_primary_name_alone_now_yields_the_acronym() -> None:
+    """The defect behind the original UAC failure, fixed at its root.
 
+    The regulators publish the long legal name, and the acronym code only knew
+    the ABBREVIATION "PJSC" as a legal prefix, so from the written-out
+    "PUBLIC JOINT STOCK COMPANY ..." it built PJSCUAC and never UAC. The match
+    was only reachable through an alias, which hid the fault until aliases were
+    dropped from batch screening.
+    """
+    from app.matching import score_pair
+    from app.normalize import acronyms_of
+
+    assert "UAC" in acronyms_of(_UAC_PRIMARY)
     primary_only = score_pair("UAC", _UAC_PRIMARY, recall_mode=True)
-    assert primary_only.base_score < 50, "precondition: the primary name cannot match UAC"
-
-    with_aliases, _ = score_against_all_names(
-        "UAC", _UAC_PRIMARY, _UAC_ALIASES, recall_mode=True
-    )
-    assert with_aliases.base_score > primary_only.base_score + 40
+    assert primary_only.base_score >= 85
 
 
 def test_the_matched_spelling_is_reported() -> None:

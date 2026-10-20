@@ -9,14 +9,16 @@ structure; the designation names are public and exactly as published.
 
 from __future__ import annotations
 
-from app.matching import score_against_all_names, score_pair
+from app.matching import BATCH_ALIAS_LIMIT, score_against_all_names, score_pair
 
 THRESHOLD = 95
 
 
 def _batch(partner, target, aliases="", country="Argentina", geography="", kind="Entity"):
+    # Exactly as the batch run calls it, including the alias policy.
     breakdown, matched = score_against_all_names(
-        partner, target, aliases, country, geography, target_subject_type=kind
+        partner, target, aliases, country, geography,
+        target_subject_type=kind, alias_limit=BATCH_ALIAS_LIMIT,
     )
     return breakdown, matched
 
@@ -160,14 +162,58 @@ def test_an_exact_name_still_alerts_even_when_short() -> None:
     assert breakdown.base_score == 100.0
 
 
-def test_an_exact_alias_match_still_alerts() -> None:
-    """A partner whose name equals a published alias IS a name match. Whether it
-    is the same party is the officer's call, and the row has to show which
-    spelling matched — see the matched-alias line in the alert table."""
+def test_batch_does_not_alert_on_an_alias() -> None:
+    """The largest remaining source of noise in a real 83,642-name file.
+
+    "JULIA HOLDING E.I.R.L." collapses to JULIA once the legal form and the
+    generic word are stripped, and JULIA is a one-word alias of an unrelated
+    person: the alert read 100 on names that visibly differ. LIGA GROUP,
+    MARTIN LTDA, MLM S.R.L. and LA RIVIERA LTDA did the same."""
+    for partner, designation, alias in (
+        ("JULIA HOLDING E.I.R.L.", "FERNANDEZ VALENCIA, Guadalupe", "JULIA"),
+        ("LIGA GROUP E.I.R.L.", "Expeditionary and Volunteer Corps", "Liga"),
+        ("MARTIN LTDA.", "KHAKI, Parviz", "MARTIN"),
+        ("MLM S.R.L.", "Katiba Macina van Jama'a Nusrat ul-Islam wa al-Muslimin", "MLM"),
+        ("LA RIVIERA LTDA", "GRUPO WISA, S.A.", "LA RIVIERA"),
+    ):
+        breakdown, matched = _batch(partner, designation, aliases=alias, kind="Entity")
+        assert breakdown.base_score < THRESHOLD, partner
+        assert matched == designation, "batch must only ever score the primary name"
+
+
+def test_batch_still_alerts_on_the_primary_name() -> None:
+    """Dropping aliases removes alias hits, not the designation's own name."""
     breakdown, matched = _batch(
-        "El Comandante SAS", "GUERRA SALINAS, Ismael", aliases="El Comandante", kind="Individual"
+        "Inversiones Valle S.A.", "INVERSIONES VALLE", aliases="VALLE", kind="Entity"
+    )
+    assert breakdown.base_score >= THRESHOLD
+    assert matched == "INVERSIONES VALLE"
+
+
+def test_manual_search_still_reaches_a_designation_through_its_alias() -> None:
+    """An officer typed one name on purpose and reads every row, so a nickname
+    hit is information there. This is what the alias scoring was built for:
+    "UAC" reaching OFAC's "PJSC UAC"."""
+    breakdown, matched = score_against_all_names(
+        "El Comandante", "GUERRA SALINAS, Ismael", "El Comandante",
+        recall_mode=True, target_subject_type="Individual",
     )
     assert matched == "El Comandante"
+    assert breakdown.base_score >= THRESHOLD
+
+
+def test_uac_still_alerts_in_batch_through_the_primary_name() -> None:
+    """The founding requirement must survive dropping aliases: OFAC's primary is
+    the long legal name, and its initials are what a partner called UAC matches.
+    A UAC registered in Russia against a Russian designation."""
+    breakdown, _ = _batch(
+        "UAC",
+        "PUBLIC JOINT STOCK COMPANY UNITED AIRCRAFT CORPORATION",
+        aliases="PJSC UAC / UNITED AIRCRAFT CORPORATION",
+        country="Russia",
+        geography="Russia",
+        kind="Entity",
+    )
     assert breakdown.base_score >= THRESHOLD
 
 

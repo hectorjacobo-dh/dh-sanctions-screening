@@ -53,7 +53,7 @@ from app import matching  # noqa: E402
 from app.audit import record_event  # noqa: E402
 from app.database import SessionLocal  # noqa: E402
 from app.ingest.runner import active_refresh_ids  # noqa: E402
-from app.matching import band_for, score_against_all_names  # noqa: E402
+from app.matching import BATCH_ALIAS_LIMIT, band_for, score_against_all_names  # noqa: E402
 from app.models import MatchResult, ScreeningRun, WatchlistTarget, utcnow  # noqa: E402
 
 ARCHIVE_COLUMNS = [
@@ -116,6 +116,7 @@ def main() -> int:
             target.geography,
             geo_penalty=run.geo_penalty,
             target_subject_type=target.subject_type,
+            alias_limit=BATCH_ALIAS_LIMIT,
         )
         if breakdown.base_score >= run.threshold:
             kept.append((alert, breakdown, matched))
