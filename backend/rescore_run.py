@@ -96,7 +96,9 @@ def main() -> int:
     if run.status != "completed":
         raise SystemExit(f"run {run.id} is '{run.status}'; re-score only a completed run")
 
-    floor = args.min_score if args.min_score is not None else run.threshold
+    # The floor is what the run STORED from, not what it displays. Using the
+    # threshold would delete the band beneath it that the bar exists to reveal.
+    floor = args.min_score if args.min_score is not None else (run.score_floor or run.threshold)
     ids = active_refresh_ids(db)
     targets = {
         (t.source, t.watchlist_id): t

@@ -470,3 +470,21 @@ def test_the_common_word_rule_is_inactive_until_frequencies_are_registered() -> 
         assert _score("INTEGRAL S. A. S.", "JSC Integral", kind="Entity") == 100.0
     finally:
         matching.TOKEN_FREQUENCY.update(saved)
+
+
+def test_a_title_plus_a_first_name_is_a_nickname_not_a_full_name() -> None:
+    """"DON MARIO" is an alias of a sanctioned individual and the name of a
+    restaurant. Two words, but one of them is a title: a nickname, which batch
+    ignores. A partner named exactly like a FULL-name alias still alerts."""
+    breakdown, matched = _batch(
+        "Don Mario SAS", "RENDON HERRERA, Daniel", aliases="DON MARIO", kind="Individual"
+    )
+    assert matched == "RENDON HERRERA, Daniel"
+    assert breakdown.base_score < THRESHOLD
+
+    breakdown, matched = _batch(
+        "Hernandez Ricardo SA de CV", "HERNANDEZ MEDRANO, Ricardo",
+        aliases="HERNANDEZ, Ricardo", kind="Individual",
+    )
+    assert matched == "HERNANDEZ, Ricardo"
+    assert breakdown.base_score == 100.0

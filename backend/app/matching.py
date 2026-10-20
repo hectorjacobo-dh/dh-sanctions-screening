@@ -649,12 +649,16 @@ BATCH_ALIAS_LIMIT = 0
 # (and the names are not literally identical). Counted from the watchlist itself,
 # not from a dictionary, so it describes THESE designations; registered whenever
 # the index is built. Empty by default, which leaves the rule inactive.
-# Articles and particles carry no identity of their own: "LA RIVIERA" is one
-# distinctive word, not two. Used when deciding whether an alias is a FULL name.
+# Articles, particles and TITLES carry no identity of their own: "LA RIVIERA" is one
+# distinctive word, not two, and "DON MARIO" is a first name with a title, not a
+# full name. Used when deciding whether an alias is a FULL name; a title-plus-name
+# alias is a nickname, and nicknames are the largest source of batch noise.
 FUNCTION_WORDS = frozenset(
     {
         "A", "AL", "AND", "DA", "DAS", "DE", "DEL", "DELLA", "DI", "DO", "DOS", "E",
         "EL", "LA", "LAS", "LE", "LES", "LO", "LOS", "O", "OF", "THE", "Y",
+        # titles and honorifics
+        "DON", "DONA", "DR", "DRA", "MR", "MRS", "MS", "SENOR", "SENORA", "SR", "SRA", "SRTA",
     }
 )
 
