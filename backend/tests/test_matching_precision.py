@@ -65,11 +65,18 @@ def test_a_three_letter_acronym_in_batch_needs_the_country_to_agree() -> None:
         assert breakdown.base_score < THRESHOLD
 
 
-def test_a_four_letter_acronym_stands_without_corroboration() -> None:
-    breakdown, _ = _batch(
-        "UACO", "United Aircraft Company Organisation", country="Argentina", kind="Entity"
-    )
-    assert breakdown.acronym == 100.0
+def test_a_four_letter_acronym_needs_the_country_too() -> None:
+    """Ten of the twenty alerts left after a 95% screen were four-letter
+    coincidences: SAKI SAS against SHAHID AHMAD KAZEMI INDUSTRIES GROUP, MFCL
+    RESTAURANT against MISTRAL FLEET CO. Uncorroborated, initials are chance."""
+    for partner, target in (
+        ("SAKI SAS", "SHAHID AHMAD KAZEMI INDUSTRIES GROUP"),
+        ("MFCL RESTAURANT SPA", "MISTRAL FLEET CO LTD"),
+        ("DILL S.R.L.", "DIGITAL INVEST LIMITED LIABILITY COMPANY"),
+    ):
+        breakdown, _ = _batch(partner, target, country="Argentina", geography="Russia", kind="Entity")
+        assert breakdown.acronym == 0.0, (partner, target)
+        assert breakdown.base_score < 95, (partner, target)
 
 
 def test_a_designations_acronym_alias_does_not_pair_it_with_a_long_partner_name() -> None:
@@ -318,7 +325,8 @@ def test_two_words_inside_a_longer_name_get_no_such_floor() -> None:
 
 def test_an_acronym_is_strong_but_never_100_in_batch() -> None:
     breakdown, _ = _batch(
-        "UACO", "United Aircraft Company Organisation", country="Argentina", kind="Entity"
+        "UACO", "United Aircraft Company Organisation",
+        country="Russia", geography="Russia", kind="Entity",
     )
     assert breakdown.base_score == 95.0
 

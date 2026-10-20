@@ -252,15 +252,18 @@ def _alignment_score(coverage: float, unmatched_weight: float) -> float:
 ACRONYM_MIN_LEN_SEARCH = 3
 ACRONYM_MIN_LEN_BATCH = 3
 
-# In batch, an acronym shorter than this needs the country to corroborate it.
-# Measured on 83,642 Latin American partner names: after individuals and the
-# reverse direction were excluded, 461 alerts still rested on the acronym bridge
-# alone, and 432 of them were three-letter names. A three-letter name is the
-# initials of SOME unrelated designation with uncomfortable regularity. The
-# founding requirement ("UAC" -> United Aircraft Corporation) is kept for the
-# case where it is actually evidence: a UAC registered in Russia against a
-# Russian designation. Four letters or more are specific enough to stand alone.
-ACRONYM_UNCORROBORATED_MIN_LEN_BATCH = 4
+# In batch, an acronym needs the country to corroborate it — at ANY length.
+# This started at three letters (432 of 461 acronym-only alerts in an 83,642-name
+# file were three-letter names) and was then raised, because four letters turned
+# out to be no better: with every other fix in place, TEN OF THE TWENTY alerts
+# that survived a 95% screen were four-letter coincidences — SAKI SAS against
+# SHAHID AHMAD KAZEMI INDUSTRIES GROUP, MFCL RESTAURANT against MISTRAL FLEET CO,
+# DILL against DIGITAL INVEST LIMITED LIABILITY. The initials of a four-word name
+# spelling a short partner name is chance. The founding requirement ("UAC" ->
+# United Aircraft Corporation) is kept where it is evidence: a UAC registered in
+# Russia against a Russian designation. Acronym candidates are at most six
+# letters, so a value above six means "always require corroboration".
+ACRONYM_UNCORROBORATED_MIN_LEN_BATCH = 7
 
 
 def _acronym_score(
