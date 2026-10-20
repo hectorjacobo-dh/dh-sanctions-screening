@@ -200,14 +200,18 @@ def _shared_name_score(
                     ratio = fuzz.ratio(q_token, t_token)
                     if ratio >= 90:
                         score = ratio / 100.0
-                if (
-                    score == 0.0
-                    and not individual
-                    and len(q_token) >= 5
-                    and len(t_token) >= 5
-                    and (t_token.startswith(q_token) or q_token.startswith(t_token))
-                ):
-                    score = 0.9
+                if score == 0.0 and not individual:
+                    short, long_ = sorted((q_token, t_token), key=len)
+                    # A prefix is a compound only when it is long and is most of
+                    # the word: GAZPROM (7 of 11) is GAZPROMBANK. SOUTH (5 of 10)
+                    # is not SOUTHFRONT — it is a common word that starts a
+                    # different one, and "South Food S.A." scored 90 against it.
+                    if (
+                        len(short) >= 6
+                        and len(short) / len(long_) >= 0.55
+                        and long_.startswith(short)
+                    ):
+                        score = 0.9
             if score > best_score:
                 best_score, best_index = score, index
         if best_index >= 0:

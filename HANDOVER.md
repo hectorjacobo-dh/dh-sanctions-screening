@@ -293,8 +293,9 @@ charged 3 points for a whole unexplained surname. A real file showed 100 on
   99 or below.
 * A near-identical spelling counts only for long words (6+ letters, ratio 90+):
   MOHAMED/MOHAMMED is a transliteration, JUNG/UNG is a different name.
-* A prefix counts only for organisations (GAZPROM -> GAZPROMBANK), never a
-  person: BELLO is not BELLOSO.
+* A prefix counts only for organisations, and only when it is long and most of
+  the word (6+ letters, 55%+ of it): GAZPROM -> GAZPROMBANK, but SOUTH is not
+  SOUTHFRONT. Never for a person: BELLO is not BELLOSO.
 * The character-level ratio is not part of the batch score. On short names it
   rescues a different surname ("BELLO MIGUEL"/"BELLOSO MIGUEL" are 92% alike).
 * A name of 3+ distinct words wholly inside another gets a stated floor of 85,

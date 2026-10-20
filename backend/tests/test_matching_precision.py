@@ -339,3 +339,14 @@ def test_the_country_no_longer_changes_the_score_by_default() -> None:
     from app.config import Settings
 
     assert Settings().geo_contradiction_penalty == 0
+
+
+def test_a_short_common_word_is_not_a_prefix_of_a_longer_one() -> None:
+    """"South Food S.A." scored 90 against SOUTHFRONT and SOUTHEAST TRADING OY,
+    because SOUTH is the first five letters of both. It is a common word that
+    starts different ones. A prefix is a compound only when it is long and is
+    most of the word: GAZPROM is GAZPROMBANK, SOUTH is not SOUTHFRONT."""
+    for designation in ("SOUTHFRONT", "SOUTHEAST TRADING OY"):
+        assert _score("South Food S.A.", designation, kind="Entity") < 85, designation
+    assert _score("GAZPROM", "GAZPROMBANK", kind="Entity") >= 85
+    assert _score("ROSNEFT", "ROSNEFTEGAZ", kind="Entity") >= 85
