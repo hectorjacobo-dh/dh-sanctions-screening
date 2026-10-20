@@ -222,3 +222,120 @@ def test_manual_search_keeps_its_recall_for_a_short_name_inside_a_designation() 
     typed one name on purpose and will read every row."""
     result = score_pair("gazprom", "GAZPROM PMC", recall_mode=True)
     assert result.base_score >= 90
+
+
+# ---------------------------------------------------------------------------
+# Honest scores: 100 means "the same name", and nothing else may reach it
+#
+# A real batch showed 100 on "ALEXIS RODRIGUEZ" against "ROMERO RODRIGUEZ,
+# Alexis", on "ALI MOHAMMADI" against "Hodjatoleslam Ali KHAN MOHAMMADI", and 95
+# on "KIM SUN JUNG" against "KIM, Ung Sun". token_set_ratio returns 100 whenever
+# one name's words sit inside the other's, and the alignment score charged three
+# points for an entire unexplained surname.
+# ---------------------------------------------------------------------------
+
+
+def _score(partner, target, kind="Individual", country="Chile", geography="Russia"):
+    breakdown, _ = _batch(partner, target, country=country, geography=geography, kind=kind)
+    return breakdown.base_score
+
+
+def test_only_identical_wording_scores_100() -> None:
+    assert _score("Antares", "ANTARES OOO", kind="Entity") == 100.0
+    # Same words in a different order is the same name.
+    assert _score("Diana Espinoza Aguilar", "ESPINOZA AGUILAR, Diana") == 100.0
+
+
+def test_an_extra_word_on_either_name_costs_points() -> None:
+    """Counted on both sides: an unexplained surname makes a different person."""
+    for partner, target in (
+        ("ALEXIS RODRIGUEZ", "ROMERO RODRIGUEZ, Alexis"),
+        ("ALI MOHAMMADI", "Hodjatoleslam Ali KHAN MOHAMMADI"),
+        ("Castro Castro Luis Eduardo", "CUELLAR CASTRO, Luis Eduardo"),
+        ("ARRIOLA MIGUEL ANGEL", "ARRIOLA MARQUEZ, Miguel Angel"),
+    ):
+        assert _score(partner, target) < 95, (partner, target)
+
+
+def test_a_plausible_partial_match_lands_in_the_mid_eighties() -> None:
+    """One extra surname on a three-word name: likely the same person, not
+    certainly. These belong in the 85 band — visible, never 100."""
+    assert 80 <= _score("ARRIOLA MIGUEL ANGEL", "ARRIOLA MARQUEZ, Miguel Angel") < 95
+    assert 80 <= _score(
+        "SOLUCIONES GASTRONOMICAS SPA", "SOLUGA SOLUCIONES GASTRONOMICAS SRL", kind="Entity"
+    ) < 95
+
+
+def test_different_people_who_share_a_word_or_two_score_low() -> None:
+    assert _score("KIM SUN JUNG", "KIM, Ung Sun") < 80
+    assert _score("BELLO MIGUEL ANGEL", "BELLOSO RODRIGUEZ, Miguel Angel") < 80
+    assert _score("Anthony Chester Lopez Rodriguez", "RODRIGUEZ LOPEZ, S.A. DE C.V.", kind="Entity") < 80
+    assert _score("ALI MOHAMMADI", "Hodjatoleslam Ali KHAN MOHAMMADI") < 80
+
+
+def test_a_short_word_one_letter_off_is_a_different_name() -> None:
+    """JUNG and UNG, SUN and SUNG: a one-letter difference in a short word is a
+    different given name, not a spelling variant."""
+    assert _score("KIM SUN JUNG", "KIM, Sung Jun") < 80
+
+
+def test_a_prefix_is_not_a_match_for_a_person() -> None:
+    """BELLO is not BELLOSO. A prefix rule is right for organisations
+    (GAZPROM -> GAZPROMBANK) and wrong for surnames."""
+    assert _score("BELLO MIGUEL", "BELLOSO, Miguel") < 80
+    assert _score("ROSNEFT", "ROSNEFTEGAZ", kind="Entity") >= 80
+
+
+def test_a_transliteration_variant_of_a_long_name_still_matches() -> None:
+    """MOHAMED / MOHAMMED is the same name spelled two ways."""
+    assert _score("Mohamed Ali Hassan", "HASSAN, Mohammed Ali") >= 95
+
+
+def test_a_shared_generic_word_is_worth_almost_nothing() -> None:
+    """Eight different "COMERCIALIZADORA ..." designations were raised against
+    one partner because that one word is contained in all of them."""
+    for target in (
+        "COMERCIALIZADORA J DURANGO",
+        "COMERCIALIZADORA CHAPALA AJIJIC",
+        "COMERCIALIZADORA INTERNACIONAL ANDINA",
+        "COMERCIALIZADORA E IMPORTADORA YESSI",
+    ):
+        assert _score("COMERCIALIZADORA S&A SPA", target, kind="Entity") < 80, target
+
+
+def test_a_contained_name_of_three_words_is_visible_but_never_100() -> None:
+    """The documented true positive. Counted on both sides, the extra "BANCO
+    UNIVERSAL" would sink it, so a name of three distinct words wholly inside
+    another gets a stated floor of 85."""
+    score = _score("Banco de Venezuela", "BANCO DE VENEZUELA SA BANCO UNIVERSAL", kind="Entity")
+    assert 85 <= score < 100
+
+
+def test_two_words_inside_a_longer_name_get_no_such_floor() -> None:
+    """ALEXIS RODRIGUEZ inside ROMERO RODRIGUEZ ALEXIS is a different person."""
+    assert _score("ALEXIS RODRIGUEZ", "ROMERO RODRIGUEZ, Alexis") < 85
+
+
+def test_an_acronym_is_strong_but_never_100_in_batch() -> None:
+    breakdown, _ = _batch(
+        "UACO", "United Aircraft Company Organisation", country="Argentina", kind="Entity"
+    )
+    assert breakdown.base_score == 95.0
+
+
+def test_manual_search_keeps_its_containment_recall() -> None:
+    """The honest-score rule is a batch rule. In manual search an officer typed
+    one name on purpose and reads every row, so a short name inside a longer
+    designation must still score high."""
+    assert score_pair("ALEXIS RODRIGUEZ", "ROMERO RODRIGUEZ, Alexis", recall_mode=True).base_score >= 90
+    assert score_pair("gazprom", "GAZPROM PMC", recall_mode=True).base_score >= 90
+
+
+def test_the_country_no_longer_changes_the_score_by_default() -> None:
+    """It never decided whether an alert was raised — that is the name score
+    alone — it only reordered the list and made a 95% screen display "85".
+    Different names measure fuzziness; a country is a different question, so it
+    is shown as its own label instead."""
+    from app.config import Settings
+
+    assert Settings().geo_contradiction_penalty == 0

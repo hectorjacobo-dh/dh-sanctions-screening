@@ -99,7 +99,11 @@ class Settings(BaseSettings):
 
     match_threshold: int = 80          # % similarity required to raise an alert
     strong_match_threshold: int = 95   # % at/above which we band as "Strong"
-    geo_contradiction_penalty: int = 15  # points deducted, never suppresses a row
+    # Points deducted from the DISPLAYED score when the partner's country differs from
+    # the designation's. Off by default: it never decided whether an alert was raised
+    # (that is the name score alone), it only reordered the list and made a 95%
+    # screen display "85". The country is shown as its own label instead.
+    geo_contradiction_penalty: int = 0
     max_candidates_per_name: int = 400
     # Tokens appearing in more than this share of watchlist targets are too
     # common to be useful for blocking (e.g. "AL", "MOHAMMED", "COMPANY").

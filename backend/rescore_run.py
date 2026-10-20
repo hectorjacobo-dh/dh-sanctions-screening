@@ -68,6 +68,14 @@ def main() -> int:
     parser.add_argument("--run-id", type=int, required=True)
     parser.add_argument("--apply", action="store_true", help="archive and delete (default: dry run)")
     parser.add_argument(
+        "--min-score", type=int, default=None,
+        help="keep alerts scoring at least this (default: the threshold the run used)",
+    )
+    parser.add_argument(
+        "--geo-penalty", type=int, default=0,
+        help="country adjustment applied to the stored score (default 0: off)",
+    )
+    parser.add_argument(
         "--acronym-min-batch", type=int, default=None,
         help="evaluate a different batch acronym length without editing the code",
     )
@@ -83,6 +91,7 @@ def main() -> int:
     if run.status != "completed":
         raise SystemExit(f"run {run.id} is '{run.status}'; re-score only a completed run")
 
+    floor = args.min_score if args.min_score is not None else run.threshold
     ids = active_refresh_ids(db)
     targets = {
         (t.source, t.watchlist_id): t
@@ -90,8 +99,8 @@ def main() -> int:
             select(WatchlistTarget).where(WatchlistTarget.refresh_id.in_(ids))
         ).scalars()
     }
-    print(f"run {run.id}: {run.uploaded_filename}  threshold={run.threshold}  "
-          f"acronym minimum (batch)={matching.ACRONYM_MIN_LEN_BATCH}")
+    print(f"run {run.id}: {run.uploaded_filename}  screened at {run.threshold}%  "
+          f"keeping alerts scoring >= {floor}  country penalty={args.geo_penalty}")
     print(f"active designations available to re-score against: {len(targets):,}")
 
     alerts = db.execute(select(MatchResult).where(MatchResult.run_id == run.id)).scalars().all()
@@ -114,11 +123,11 @@ def main() -> int:
             target.aliases,
             alert.account_country,
             target.geography,
-            geo_penalty=run.geo_penalty,
+            geo_penalty=args.geo_penalty,
             target_subject_type=target.subject_type,
             alias_limit=BATCH_ALIAS_LIMIT,
         )
-        if breakdown.base_score >= run.threshold:
+        if breakdown.base_score >= floor:
             kept.append((alert, breakdown, matched))
             for code in breakdown.reasons:
                 kept_reason[str(getattr(code, "value", code))] += 1
@@ -177,7 +186,7 @@ def main() -> int:
         alert.base_score = breakdown.base_score
         alert.geo_adjustment = breakdown.geo_adjustment
         alert.score = breakdown.final_score
-        alert.risk_band = str(band_for(breakdown, run.threshold, run.strong_threshold))
+        alert.risk_band = str(band_for(breakdown, floor, run.strong_threshold))
         alert.score_breakdown = breakdown.as_dict()
         alert.reason_codes = ",".join(str(getattr(r, "value", r)) for r in breakdown.reasons)
         alert.matched_alias = "" if matched == alert.target_name else matched[:300]
@@ -193,7 +202,8 @@ def main() -> int:
         payload={
             "case": run.uploaded_filename, "alerts_before": total, "alerts_removed": len(removed),
             "alerts_after": run.total_matches, "kept_resolved": protected, "kept_orphaned": orphaned,
-            "threshold": run.threshold, "acronym_min_batch": matching.ACRONYM_MIN_LEN_BATCH,
+            "screened_at": run.threshold, "kept_at_or_above": floor, "geo_penalty": args.geo_penalty,
+            "acronym_min_batch": matching.ACRONYM_MIN_LEN_BATCH,
             "archive_file": archive.name, "archive_sha256": digest,
             "basis": "corrected matching logic; re-scoring can only remove alerts, never add",
         },

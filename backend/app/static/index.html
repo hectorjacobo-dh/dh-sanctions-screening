@@ -146,6 +146,12 @@
   .rmx td.rl{color:var(--dim);width:42%}
   /* Without this line a row reads as a name paired with an unrelated designation:
      the alert was raised on an alias the table never showed. */
+  /* A partner with several candidate matches reads as one case. */
+  tr.grp td{border-top-color:var(--border)}
+  tr.grp-rest td{border-top:1px dashed var(--border)}
+  tr.grp-rest td:nth-child(2) .dim{font-size:12px}
+  .grpbadge{display:inline-block;margin-top:3px;font-size:11px;padding:1px 7px;border-radius:9px;
+    background:rgba(37,99,235,.14);color:var(--accent)}
   .matchedon{font-size:12.5px;color:var(--warn);margin:2px 0}
   .reasonval{font-size:13px;padding:7px 0;font-weight:600}
   .rmx tbody tr.on td.rl{color:#fff}
@@ -365,8 +371,8 @@
           <input type="range" id="th" min="60" max="100" value="80" />
         </div>
         <div style="width:230px">
-          <label class="dim" style="font-size:13px">Geographic de-prioritisation: <strong id="geoVal">−15</strong></label>
-          <input type="range" id="geo" min="0" max="40" value="15" />
+          <label class="dim" style="font-size:13px">Geographic de-prioritisation: <strong id="geoVal">off</strong></label>
+          <input type="range" id="geo" min="0" max="40" value="0" />
         </div>
         <button class="primary" id="btnRun" disabled>Run batch screening</button>
       </div>
@@ -1358,7 +1364,7 @@ function pick(f){
 }
 
 $('th').oninput = (e) => $('thVal').textContent = e.target.value + '%';
-$('geo').oninput = (e) => $('geoVal').textContent = '−' + e.target.value;
+$('geo').oninput = (e) => $('geoVal').textContent = Number(e.target.value) > 0 ? '−' + e.target.value : 'off';
 
 $('btnRun').onclick = async () => {
   const f = fileInput.files[0];
@@ -1554,6 +1560,32 @@ function bandClass(b){
   return 'weak';
 }
 
+/* Country signals in plain words. The stored codes say "deprioritised", which is
+   untrue when the geographic adjustment is off and nothing is being reordered. */
+const CHIP_LABELS = {
+  GEO_CONTRADICTION_DEPRIORITISED: 'COUNTRY DIFFERS',
+  GEO_CONFIRMED: 'COUNTRY MATCHES',
+  GEO_UNKNOWN_NO_ADJUSTMENT: 'COUNTRY UNKNOWN',
+};
+function chipLabel(code){ return CHIP_LABELS[code] || code; }
+
+/* One partner, several designations, is ONE case with several candidate
+   matches. Drawn as separate rows it reads as the same alert repeated.
+   Consecutive rows for the same partner are labelled "match k of n" and the
+   repeats are quietened, so a partner with eight candidates is plainly one
+   partner with eight things to look at. */
+function partnerKey(m){ return (m.grid || '') + '|' + (m.partner_legal_name || m.ubo_name || ''); }
+function groupInfo(items){
+  const totals = new Map(), seen = new Map(), info = [];
+  items.forEach(m => totals.set(partnerKey(m), (totals.get(partnerKey(m)) || 0) + 1));
+  items.forEach(m => {
+    const k = partnerKey(m);
+    const index = (seen.get(k) || 0) + 1; seen.set(k, index);
+    info.push({n: totals.get(k), index});
+  });
+  return info;
+}
+
 async function renderRun(run){
   // The rows are built from STATUSES — the status dropdown's options and the
   // reason label both come from it. It used to be fetched lazily, only when a
@@ -1569,14 +1601,18 @@ async function renderRun(run){
   try{ page = await api(`/api/runs/${run.run_ref}/matches?${q}`); }
   catch(e){ banner($('globalError'),'err', esc(e.message)); return; }
 
-  const rows = page.items.map(m => `<tr data-id="${m.id}" class="${m.decided_at ? 'resolved' : ''}">
+  const groups = groupInfo(page.items);
+  const rows = page.items.map((m, i) => `<tr data-id="${m.id}" class="${m.decided_at ? 'resolved' : ''}${groups[i].n > 1 ? ' grp' : ''}${groups[i].index > 1 ? ' grp-rest' : ''}">
     <td class="num">
       <span class="badge ${bandClass(m.risk_band)}">${m.score.toFixed(0)}</span>
       ${m.geo_adjustment !== 0 ? `<div style="margin-top:4px"><span class="badge geo" title="De-prioritised: partner country contradicts the designation">geo ${m.geo_adjustment}</span></div>` : ''}
     </td>
     <td>
-      <strong>${esc(m.partner_legal_name || m.ubo_name)}</strong>
-      <div class="dim mono">${esc(m.grid)} · ${esc(m.account_country || 'country unknown')} · ${esc(m.region)}</div>
+      ${groups[i].index > 1
+        ? `<div class="dim">↳ same partner</div>`
+        : `<strong>${esc(m.partner_legal_name || m.ubo_name)}</strong>
+           <div class="dim mono">${esc(m.grid)} · ${esc(m.account_country || 'country unknown')} · ${esc(m.region)}</div>`}
+      ${groups[i].n > 1 ? `<div class="grpbadge">match ${groups[i].index} of ${groups[i].n}</div>` : ''}
       ${m.screened_field === 'UBO' ? '<div class="dim">matched on UBO</div>' : ''}
     </td>
     <td>
@@ -1585,7 +1621,7 @@ async function renderRun(run){
         ? `<div class="matchedon" title="The published spelling this name was actually compared with">matched on <b>“${esc(m.matched_alias)}”</b></div>`
         : ''}
       <div class="dim">${esc(m.sanctions_program)}</div>
-      <div class="rc">${(m.reason_codes||'').split(',').filter(Boolean).map(c=>`<span>${esc(c)}</span>`).join('')}</div>
+      <div class="rc">${(m.reason_codes||'').split(',').filter(Boolean).map(c=>`<span>${esc(chipLabel(c))}</span>`).join('')}</div>
     </td>
     <td><span class="badge weak">${esc(m.subject_type||'Unknown')}</span></td>
     <td>${esc(m.source)}<div class="dim mono">${esc(m.watchlist_id)}</div></td>

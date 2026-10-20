@@ -145,6 +145,81 @@ def token_alignment(
     return total / len(query_tokens), weight
 
 
+def _shared_name_score(
+    partner_tokens: tuple[str, ...],
+    target_tokens: tuple[str, ...],
+    *,
+    individual: bool,
+) -> float:
+    """How much of BOTH names is the same name, 0-100. Used in batch.
+
+    A weighted Dice coefficient over words: ``2 x shared / (partner + target)``.
+    It replaces two measures that both rewarded a name for being *contained*:
+
+    * ``token_set_ratio`` returns 100 whenever one name's set of words sits
+      inside the other's, so "ALEXIS RODRIGUEZ" scored 100 against "ROMERO
+      RODRIGUEZ, Alexis" and "ALI MOHAMMADI" scored 100 against "Hodjatoleslam
+      Ali KHAN MOHAMMADI". Two further unexplained words make a different
+      person, not the same one.
+    * The alignment score charged 3 points for a whole unexplained surname.
+
+    Counting both sides means an extra word on EITHER name costs. Three of four
+    words shared is 86; two of three against a four-word name is 57.
+
+    Matching words:
+
+    * Exact equality always counts.
+    * A near-identical spelling counts only for long words (6+ letters, ratio of
+      at least 90): MOHAMMED/MOHAMED is a transliteration, JUNG/UNG is a
+      different name. A one-letter difference in a short word is not variation.
+    * A prefix counts only for an ORGANISATION ("GAZPROM" -> "GAZPROMBANK").
+      For a person it is wrong: BELLO is not BELLOSO.
+
+    Words that identify nothing (company-law boilerplate) weigh 0.15, so a
+    shared "COMERCIALIZADORA" is worth almost nothing and a shared surname is
+    worth a full point.
+    """
+    if not partner_tokens or not target_tokens:
+        return 0.0
+
+    def weight(token: str) -> float:
+        return 0.15 if is_generic_token(token) else 1.0
+
+    used: set[int] = set()
+    shared = 0.0
+    for q_token in partner_tokens:
+        best_score, best_index = 0.0, -1
+        for index, t_token in enumerate(target_tokens):
+            if index in used:
+                continue
+            if q_token == t_token:
+                score = 1.0
+            else:
+                score = 0.0
+                if len(q_token) >= 6 and len(t_token) >= 6:
+                    ratio = fuzz.ratio(q_token, t_token)
+                    if ratio >= 90:
+                        score = ratio / 100.0
+                if (
+                    score == 0.0
+                    and not individual
+                    and len(q_token) >= 5
+                    and len(t_token) >= 5
+                    and (t_token.startswith(q_token) or q_token.startswith(t_token))
+                ):
+                    score = 0.9
+            if score > best_score:
+                best_score, best_index = score, index
+        if best_index >= 0:
+            used.add(best_index)
+            shared += best_score * weight(q_token)
+
+    partner_weight = sum(weight(t) for t in partner_tokens)
+    target_weight = sum(weight(t) for t in target_tokens)
+    total = partner_weight + target_weight
+    return 100.0 * 2.0 * shared / total if total else 0.0
+
+
 def _alignment_score(coverage: float, unmatched_weight: float) -> float:
     """Convert an alignment into a 0-100 score.
 
@@ -385,18 +460,47 @@ def score_pair(
         len(partner_distinct), len(target_distinct), 1
     )
 
-    base = float(token_sort)
-    if (length_ratio >= 0.70 and word_overlap >= 0.75) or (contained and discriminative):
-        base = max(base, float(token_set))
+    shared_score = _shared_name_score(
+        partner_tokens, target_tokens, individual=(target_subject_type == "Individual")
+    )
 
-    # In manual search alignment always counts; in batch only for a name
-    # discriminative on its own. See the docstring — this is the recall/volume
-    # policy split, and it is the difference between "gazprom" returning
-    # nothing and returning the 100+ designations that contain it.
-    if recall_mode or discriminative:
+    if recall_mode:
+        # Manual search: an officer typed one name on purpose and reads every row,
+        # so a short name contained in a longer designation SHOULD score high —
+        # that is what makes "gazprom" return the 100+ designations containing
+        # it. Unchanged from the calibration already validated.
+        base = float(token_sort)
+        if (length_ratio >= 0.70 and word_overlap >= 0.75) or (contained and discriminative):
+            base = max(base, float(token_set))
         base = max(base, alignment)
         if alignment >= base and coverage >= 0.999 and unmatched > 0:
             reasons.append(ReasonCode.NAME_WITHIN_DESIGNATION)
+    else:
+        # Batch: the score is how much of the two names is the same name, and 100
+        # means they are the same name. Nobody reads 28,000 alerts, and a score of
+        # 100 on names that visibly differ cannot be defended to an officer.
+        # Word-level only. The character-level ratio is deliberately NOT part of
+        # the batch score: on a short name it rescues a different surname, since
+        # "BELLO MIGUEL" and "BELLOSO MIGUEL" are 92% alike letter for letter and
+        # are two different people. Spelling variation is still handled, but where
+        # it is real: long words (6+ letters, ratio 90+) in _shared_name_score.
+        base = shared_score
+
+        # A name of three or more distinct words that sits wholly inside the
+        # other is a genuine partial match: it is how "Banco de Venezuela" reaches
+        # OFAC's "BANCO DE VENEZUELA SA BANCO UNIVERSAL", a live designation this
+        # system exists to catch. Counted on both sides the extra "BANCO
+        # UNIVERSAL" would cost it 22 points, so it is given a stated floor of 85
+        # — high enough to be seen, never 100, because the names are not the same.
+        # Two words is not enough: ALEXIS RODRIGUEZ inside ROMERO RODRIGUEZ ALEXIS
+        # is a different person.
+        if contained and carries_identity and len(distinct_shorter) >= 3:
+            base = max(base, 85.0)
+
+        # Only identical wording, in any order, may score 100. Every other
+        # pair is held below it, so 100 keeps its meaning.
+        if sorted(partner_norm.split()) != sorted(target_norm.split()):
+            base = min(base, 99.0)
 
     # In batch, a very short name that is not an exact match to the spelling it
     # was scored against is held below the alerting range. Ratios on three or
@@ -412,7 +516,9 @@ def score_pair(
     ) <= 4:
         base = min(base, 89.0)
 
-    base = max(base, acronym)
+    # An acronym is strong evidence, but it is not an identical name: in batch it
+    # is capped at 95 so it sits at the alerting line and never at 100.
+    base = max(base, acronym if recall_mode else min(acronym, 95.0))
 
     if partner_norm == target_norm:
         base = 100.0

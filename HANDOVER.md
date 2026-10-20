@@ -278,3 +278,37 @@ primary name for United Aircraft Corporation it built PJSCUAC and never UAC. The
 match had only ever worked through an alias. Fixed in `normalize.py`, narrowly:
 the spelled-out prefixes are consulted when building acronyms only, not in
 name normalisation, which would have changed scoring for every name.
+
+### Batch scores are honest: 100 means "the same name"
+
+Batch scoring (not manual search) is `_shared_name_score` in `app/matching.py`: a
+weighted Dice coefficient over words, `2 x shared / (partner + target)`, so an
+extra word on EITHER name costs points. It replaced `token_set_ratio` (100
+whenever one name's words sit inside the other's) and an alignment score that
+charged 3 points for a whole unexplained surname. A real file showed 100 on
+"ALEXIS RODRIGUEZ" vs "ROMERO RODRIGUEZ, Alexis" and 95 on "KIM SUN JUNG" vs
+"KIM, Ung Sun". Rules:
+
+* Only identical words, in any order, may score 100; everything else is held at
+  99 or below.
+* A near-identical spelling counts only for long words (6+ letters, ratio 90+):
+  MOHAMED/MOHAMMED is a transliteration, JUNG/UNG is a different name.
+* A prefix counts only for organisations (GAZPROM -> GAZPROMBANK), never a
+  person: BELLO is not BELLOSO.
+* The character-level ratio is not part of the batch score. On short names it
+  rescues a different surname ("BELLO MIGUEL"/"BELLOSO MIGUEL" are 92% alike).
+* A name of 3+ distinct words wholly inside another gets a stated floor of 85,
+  so "Banco de Venezuela" still reaches OFAC's "... SA BANCO UNIVERSAL".
+* Acronyms are capped at 95 in batch.
+
+The country adjustment is OFF by default (`geo_contradiction_penalty = 0`). It
+never decided whether an alert was raised; it only reordered the list and made a
+95% screen display "85". The country is shown as a label (COUNTRY DIFFERS /
+MATCHES / UNKNOWN). It is a different question from name similarity, not a
+duplicate of it, so it was neutralised rather than removed.
+
+Alerts for one partner are drawn as one case ("match 2 of 8") instead of
+looking like repeated rows.
+
+Re-running the 83,642-name file now takes about 15 minutes (was ~2.5 hours):
+aliases are off in batch and nothing competes for the machine.
