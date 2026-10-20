@@ -350,3 +350,49 @@ def test_a_short_common_word_is_not_a_prefix_of_a_longer_one() -> None:
         assert _score("South Food S.A.", designation, kind="Entity") < 85, designation
     assert _score("GAZPROM", "GAZPROMBANK", kind="Entity") >= 85
     assert _score("ROSNEFT", "ROSNEFTEGAZ", kind="Entity") >= 85
+
+
+# ---------------------------------------------------------------------------
+# "Exact" means the same name, with only genuine legal forms set aside
+#
+# The legal-suffix list also held business words (GROUP, HOLDING, TRADING,
+# INTERNATIONAL ...). Stripping them let "CORAL HOLDINGS GROUP SA DE CV" and
+# "CORAL TRADING EST" both reduce to "CORAL" and be declared an exact match.
+# ---------------------------------------------------------------------------
+
+
+def test_business_words_are_part_of_the_name_not_a_legal_form() -> None:
+    """AEZA, AEZA GROUP and AEZA INTERNATIONAL are three different names."""
+    for partner, target in (
+        ("AEZA SOCIEDAD DE RESPONSABILIDAD LIMITADA", "AEZA GROUP LLC"),
+        ("AEZA SOCIEDAD DE RESPONSABILIDAD LIMITADA", "AEZA INTERNATIONAL, LTD."),
+        ("ALAMO S. R. L.", "ALAMO TRADING S.A."),
+        ("B & M LIMITADA", "BM HOLDING AG"),
+        ("CORAL HOLDINGS GROUP SA DE CV", "CORAL TRADING EST"),
+    ):
+        assert _score(partner, target, kind="Entity") < 95, (partner, target)
+
+
+def test_a_different_legal_form_does_not_stop_a_name_being_exact() -> None:
+    """Antares / ANTARES OOO, Albatros S.A / ALBATROS OOO, CAMORRA S.A.S. /
+    CAMORRA: the same company, written with and without its legal form."""
+    for partner, target in (
+        ("Antares", "ANTARES OOO"),
+        ("Albatros S.A", "ALBATROS OOO"),
+        ("CAMORRA S. A. S.", "CAMORRA"),
+    ):
+        assert _score(partner, target, kind="Entity") == 100.0, (partner, target)
+
+
+def test_a_core_of_four_letters_or_fewer_is_only_exact_when_literally_identical() -> None:
+    """BIO SRL and BIO CORPORATION both reduce to BIO. A three-letter core is
+    too thin to carry "same name" across two different legal forms."""
+    assert _score("BIO SRL", "BIO CORPORATION", kind="Entity") < 95
+    assert _score("ISIS", "ISIS", kind="Entity") == 100.0
+    assert _score("ISIS LLC", "ISIS", kind="Entity") < 95
+
+
+def test_a_one_letter_slip_in_a_long_word_is_not_a_95_match() -> None:
+    """SIBERIA / SIBERICA are 93% alike letter for letter and are different
+    words; at a 95% screen they must not appear."""
+    assert _score("Siberia Spa", "SIBERICA OY", kind="Entity") < 95

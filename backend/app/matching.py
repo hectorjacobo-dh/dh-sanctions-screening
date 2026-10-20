@@ -23,6 +23,8 @@ from rapidfuzz import fuzz
 
 from .geography import countries_contradict, resolve_country
 from .normalize import (
+    basic_normalize,
+    strict_tokens,
     acronyms_of,
     is_acronym_candidate,
     is_generic_token,
@@ -464,8 +466,25 @@ def score_pair(
         len(partner_distinct), len(target_distinct), 1
     )
 
+    # What counts as the SAME name in batch is judged on the strict form, where
+    # only genuine legal forms are removed. The aggressive form used for finding
+    # candidates also drops GROUP, HOLDING, TRADING and similar business words,
+    # which is how "CORAL HOLDINGS GROUP" came to equal "CORAL TRADING EST".
+    partner_strict = strict_tokens(partner_name)
+    target_strict = strict_tokens(target_name)
+    strict_equal = bool(partner_strict) and sorted(partner_strict) == sorted(target_strict)
+
+    # A core of four letters or fewer is too thin for "same name" to mean much
+    # once the legal forms are set aside: BIO SRL and BIO CORPORATION both reduce
+    # to BIO. For such a name only a literally identical name is exact — ISIS and
+    # ISIS — while a core of any real length (ANTARES, ALBATROS, CAMORRA) is
+    # exact whatever legal form is attached.
+    literal_equal = basic_normalize(partner_name) == basic_normalize(target_name)
+    short_core = min(len(partner_norm), len(target_norm)) <= 4
+    exact_in_batch = strict_equal and (literal_equal or not short_core)
+
     shared_score = _shared_name_score(
-        partner_tokens, target_tokens, individual=(target_subject_type == "Individual")
+        partner_strict, target_strict, individual=(target_subject_type == "Individual")
     )
 
     if recall_mode:
@@ -503,7 +522,7 @@ def score_pair(
 
         # Only identical wording, in any order, may score 100. Every other
         # pair is held below it, so 100 keeps its meaning.
-        if sorted(partner_norm.split()) != sorted(target_norm.split()):
+        if not exact_in_batch:
             base = min(base, 99.0)
 
     # In batch, a very short name that is not an exact match to the spelling it
@@ -515,16 +534,16 @@ def score_pair(
     # alerts on "ISIS". It is applied BEFORE the acronym bridge is folded in:
     # initials of an organisation are evidence of a different kind, and holding
     # "UAC" to 89 would have broken the system's founding requirement.
-    if not recall_mode and partner_norm != target_norm and min(
-        len(partner_norm), len(target_norm)
-    ) <= 4:
+    if not recall_mode and not literal_equal and short_core:
         base = min(base, 89.0)
 
     # An acronym is strong evidence, but it is not an identical name: in batch it
     # is capped at 95 so it sits at the alerting line and never at 100.
     base = max(base, acronym if recall_mode else min(acronym, 95.0))
 
-    if partner_norm == target_norm:
+    # Manual search keeps the aggressive comparison (an officer reads every row);
+    # batch requires identical wording once only genuine legal forms are removed.
+    if exact_in_batch if not recall_mode else partner_norm == target_norm:
         base = 100.0
         reasons.append(ReasonCode.EXACT_NORMALISED)
     if acronym_used and acronym >= 85:

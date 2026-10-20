@@ -190,12 +190,13 @@ def _strip_spelled_prefixes(tokens: list[str]) -> list[str]:
     return tokens
 
 
-def _strip_suffixes(tokens: list[str]) -> list[str]:
+def _strip_suffixes(tokens: list[str], keep: frozenset = frozenset()) -> list[str]:
     changed = True
     while changed and len(tokens) > 1:
         changed = False
         for size in range(min(_MAX_SUFFIX_TOKENS, len(tokens) - 1), 0, -1):
-            if tuple(tokens[-size:]) in LEGAL_SUFFIXES:
+            suffix = tuple(tokens[-size:])
+            if suffix in LEGAL_SUFFIXES and suffix not in keep:
                 tokens = tokens[:-size]
                 changed = True
                 break
@@ -218,6 +219,43 @@ def normalize_name(value: str | None) -> str:
     tokens = _collapse_initial_runs(base.split())
     core = _strip_suffixes(_strip_prefixes(list(tokens)))
     return " ".join(core) if core else " ".join(tokens)
+
+
+# LEGAL_SUFFIXES mixes two different things. Genuine legal forms (SA, SRL, LLC,
+# OOO, SOCIEDAD DE RESPONSABILIDAD LIMITADA) say what KIND of company it is and
+# carry no identity. But it also holds business words added for recall — GROUP,
+# HOLDING(S), TRADING, INTERNATIONAL, FOOD(S), RESTAURANT(S), CAFE, KITCHEN,
+# CATERING, TRUST and the like. Stripping those too is useful for finding a
+# candidate, and wrong for deciding two names are the SAME name: "CORAL HOLDINGS
+# GROUP SA DE CV" and "CORAL TRADING EST" both reduce to "CORAL", and were
+# declared an exact match and scored 100.
+_DESCRIPTIVE_WORDS = frozenset(
+    {
+        "CAFE", "CAFETERIA", "CATERING", "ENTERPRISE", "ENTERPRISES", "FOOD", "FOODS",
+        "FOODSTUFF", "GENERAL", "GROUP", "HOLDING", "HOLDINGS", "INTERNATIONAL", "INTL",
+        "KITCHEN", "RESTAURANT", "RESTAURANTS", "TRADING", "TRUST",
+    }
+)
+_DESCRIPTIVE_SUFFIXES: frozenset = frozenset(
+    suffix for suffix in LEGAL_SUFFIXES if any(word in _DESCRIPTIVE_WORDS for word in suffix)
+)
+
+
+@lru_cache(maxsize=1_000_000)
+def strict_tokens(value: str | None) -> tuple[str, ...]:
+    """Words of a name with ONLY genuine legal forms removed.
+
+    Used to decide whether two names are identical. Business words stay, so
+    "AEZA SOCIEDAD DE RESPONSABILIDAD LIMITADA" is AEZA and "AEZA GROUP LLC" is
+    AEZA GROUP: similar, not the same.
+    """
+    base = basic_normalize(value)
+    if not base:
+        return ()
+    base = _ARABIC_ARTICLE.sub("AL", base)
+    tokens = _collapse_initial_runs(base.split())
+    core = _strip_suffixes(_strip_prefixes(list(tokens)), keep=_DESCRIPTIVE_SUFFIXES)
+    return tuple(core) if core else tuple(tokens)
 
 
 @lru_cache(maxsize=1_000_000)
