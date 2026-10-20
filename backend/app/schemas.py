@@ -104,6 +104,9 @@ class MatchOut(BaseModel):
     tax_id: str
     screened_field: str
     target_name: str
+    # The published spelling this name was actually scored against, when it was
+    # an alias rather than the primary. Empty when the primary name matched.
+    matched_alias: str = ""
     subject_type: str
     entity_type: str
     sanctions_program: str

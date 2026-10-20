@@ -273,6 +273,7 @@ def search(
                 # Manual search is recall-first: the officer asked about one
                 # name and will read every row.
                 recall_mode=True,
+                target_subject_type=target.subject_type,
             )
             if breakdown.base_score < body.threshold:
                 continue
@@ -494,6 +495,7 @@ def create_case(
             target.geography,
             geo_penalty=body.geo_penalty,
             recall_mode=True,
+            target_subject_type=target.subject_type,
         )
         if breakdown.base_score < body.threshold:
             continue

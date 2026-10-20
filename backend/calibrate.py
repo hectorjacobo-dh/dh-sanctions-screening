@@ -125,7 +125,8 @@ def best_score(name: str, targets: dict, index) -> tuple[float, str, str]:
         if target is None:
             continue
         breakdown, spelling = score_against_all_names(
-            name, target.name, target.aliases, None, target.geography, recall_mode=True
+            name, target.name, target.aliases, None, target.geography, recall_mode=True,
+            target_subject_type=target.subject_type
         )
         if breakdown.base_score > best:
             best, designation, matched_on = breakdown.base_score, target.name, spelling

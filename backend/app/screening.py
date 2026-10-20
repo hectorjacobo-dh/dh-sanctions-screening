@@ -642,6 +642,7 @@ def run_screening(
                         group_country,
                         target.geography,
                         geo_penalty=run.geo_penalty,
+                        target_subject_type=target.subject_type,
                     )
                     if breakdown.base_score >= run.threshold:
                         scored.append((target, breakdown, matched_name))

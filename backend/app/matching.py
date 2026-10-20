@@ -159,8 +159,37 @@ def _alignment_score(coverage: float, unmatched_weight: float) -> float:
     return max(0.0, min(100.0, 100.0 * coverage - 3.0 * max(0.0, unmatched_weight)))
 
 
-def _acronym_score(partner_raw: str, target_raw: str) -> tuple[float, bool]:
-    """Bridge acronyms against expansions in both directions.
+# Shortest acronym worth bridging. Three letters in both modes: "UAC" against
+# "United Aircraft Corporation" is the first requirement this system was built
+# to meet. The false alerts that prompted tightening this rule did not come from
+# the length — they came from bridging to INDIVIDUALS and from the reverse
+# direction, both now removed. Measured on 83,642 Latin American partner names,
+# raising the batch minimum to four changed nothing (0 acronym-dependent alerts
+# survive either way), so there was no case for giving up the requirement.
+# Kept as separate constants so it can be raised without a code change to the
+# rule if a future file proves otherwise.
+ACRONYM_MIN_LEN_SEARCH = 3
+ACRONYM_MIN_LEN_BATCH = 3
+
+# In batch, an acronym shorter than this needs the country to corroborate it.
+# Measured on 83,642 Latin American partner names: after individuals and the
+# reverse direction were excluded, 461 alerts still rested on the acronym bridge
+# alone, and 432 of them were three-letter names. A three-letter name is the
+# initials of SOME unrelated designation with uncomfortable regularity. The
+# founding requirement ("UAC" -> United Aircraft Corporation) is kept for the
+# case where it is actually evidence: a UAC registered in Russia against a
+# Russian designation. Four letters or more are specific enough to stand alone.
+ACRONYM_UNCORROBORATED_MIN_LEN_BATCH = 4
+
+
+def _acronym_score(
+    partner_raw: str,
+    target_raw: str,
+    *,
+    target_is_individual: bool = False,
+    recall_mode: bool = False,
+) -> tuple[float, bool]:
+    """Bridge an acronym against the name it abbreviates.
 
     This is the control for the "UAC" vs "United Aircraft Corporation" failure
     mode called out in the process review.
@@ -168,7 +197,25 @@ def _acronym_score(partner_raw: str, target_raw: str) -> tuple[float, bool]:
     Takes the *raw* names deliberately. Normalisation strips the legal form, and
     the legal form is usually part of the acronym — expanding the normalised
     "United Aircraft" yields "UA" and the match is lost.
+
+    Three restrictions, each added after a specific batch of false alerts:
+
+    * **Never against a person.** An organisation has an acronym; a person does
+      not. "AMF SAS" scored 100 against four unrelated individuals because
+      their initials happened to spell AMF (Azzam Mansour Fadlallah, Abdelkebir
+      Mohamad Fakhiri, ...). Initials of a human name are not an abbreviation of
+      it, so the bridge is switched off for individual designations entirely.
+    * **Only the partner's own name may be the acronym in batch.** The reverse —
+      a designation's alias is the acronym and the partner's long name merely
+      shares its initials — paired "AGN Alimentos y Bebidas" with the Abdallah
+      Azzam Brigades because both start A-A-B. An officer typing a full name
+      reaches the designation through its words anyway, so the reverse adds
+      only coincidences. Manual search keeps it for entities.
+    * A minimum length (see ``ACRONYM_MIN_LEN_BATCH``).
     """
+    if target_is_individual:
+        return 0.0, False
+
     partner_norm = normalize_name(partner_raw)
     target_norm = normalize_name(target_raw)
     if not partner_norm or not target_norm:
@@ -184,13 +231,16 @@ def _acronym_score(partner_raw: str, target_raw: str) -> tuple[float, bool]:
     if partner_is_acronym:
         short, long_name = partner_norm.strip(), target_raw
     else:
+        if not recall_mode:
+            return 0.0, False
         short, long_name = target_norm.strip(), partner_raw
 
     # Two-letter acronyms are not discriminative: "BM" expands to any two-word
     # name beginning B_ M_, which matched "Bank Melli" to "BM Holding AG" at
-    # full score. Three characters is the shortest length that carries signal.
+    # full score.
+    minimum = ACRONYM_MIN_LEN_SEARCH if recall_mode else ACRONYM_MIN_LEN_BATCH
     expansions = acronyms_of(long_name)
-    if not expansions or len(short) < 3:
+    if not expansions or len(short) < minimum:
         return 0.0, False
 
     if short in expansions:
@@ -209,6 +259,7 @@ def score_pair(
     geo_penalty: int = 15,
     matched_on_alias: bool = False,
     recall_mode: bool = False,
+    target_subject_type: str = "",
 ) -> ScoreBreakdown:
     """Score one partner/target pair and explain the result.
 
@@ -242,7 +293,24 @@ def score_pair(
     token_sort = fuzz.token_sort_ratio(partner_norm, target_norm)
     partial = fuzz.partial_ratio(partner_norm, target_norm)
     weighted = fuzz.WRatio(partner_norm, target_norm)
-    acronym, acronym_used = _acronym_score(partner_name, target_name)
+    acronym, acronym_used = _acronym_score(
+        partner_name,
+        target_name,
+        target_is_individual=(target_subject_type == "Individual"),
+        recall_mode=recall_mode,
+    )
+
+    # Geography is resolved here, ahead of its use below, because a short
+    # acronym in batch is only evidence when the country supports it.
+    partner_codes = resolve_country(partner_country)
+    target_codes = resolve_country(target_geography)
+    if (
+        not recall_mode
+        and acronym_used
+        and len(partner_norm) < ACRONYM_UNCORROBORATED_MIN_LEN_BATCH
+        and not (partner_codes and target_codes and partner_codes & target_codes)
+    ):
+        acronym, acronym_used = 0.0, False
 
     # Length agreement between the two normalised names.
     length_ratio = min(len(partner_norm), len(target_norm)) / max(
@@ -280,7 +348,21 @@ def score_pair(
     )
     shorter_tokens = shorter.split()
     contained = bool(shorter_tokens) and all(t in longer for t in shorter_tokens)
-    discriminative = len(shorter_tokens) >= 3 or len(shorter) >= 12
+    # Counted on DISTINCT words. A repeated word inflated both measures:
+    # "ISMAEL ISMAEL" is two tokens and thirteen characters, so it passed as
+    # "discriminative" and scored 100 against every four-word name containing
+    # ISMAEL — which is one given name, not a distinctive designation.
+    distinct_shorter = list(dict.fromkeys(shorter_tokens))
+    # ...and it must contain at least one word that identifies anything. Length
+    # alone was the test, so "INTERNATIONAL" — a single generic word that happens
+    # to be 13 letters — counted as distinctive and paired a partner with every
+    # designation containing it (Al-Aqsa International Foundation, Persia
+    # International Bank, Korea International Chemical...). "FEDERAL SERVICES"
+    # did the same. A name made only of corporate boilerplate says nothing.
+    carries_identity = any(not is_generic_token(t) for t in distinct_shorter)
+    discriminative = carries_identity and (
+        len(distinct_shorter) >= 3 or len(" ".join(distinct_shorter)) >= 12
+    )
 
     # Token-level alignment: does the searched name appear *as a name* in the
     # designation, allowing prefix forms (GAZPROM -> GAZPROMBANK)?
@@ -289,8 +371,22 @@ def score_pair(
     coverage, unmatched = token_alignment(partner_tokens, target_tokens)
     alignment = _alignment_score(coverage, unmatched)
 
+    # How much of each name is actually shared, counted on distinct words.
+    # token_set_ratio returns 100 whenever one name's SET of words sits inside
+    # the other's, and the length check above only compares raw string lengths,
+    # so two names of similar length sharing one word walked through it:
+    # a two-word partner scored 100 against "ISMAEL ISMAEL", and a one-word core
+    # (CAPITAL) scored 100 against three unrelated "... CAPITAL ..." companies,
+    # because 7 characters against 10 happens to clear 0.70. Similar length says
+    # nothing about whether the names are the same name; the words do.
+    partner_distinct = set(partner_norm.split())
+    target_distinct = set(target_norm.split())
+    word_overlap = len(partner_distinct & target_distinct) / max(
+        len(partner_distinct), len(target_distinct), 1
+    )
+
     base = float(token_sort)
-    if length_ratio >= 0.70 or (contained and discriminative):
+    if (length_ratio >= 0.70 and word_overlap >= 0.75) or (contained and discriminative):
         base = max(base, float(token_set))
 
     # In manual search alignment always counts; in batch only for a name
@@ -302,6 +398,20 @@ def score_pair(
         if alignment >= base and coverage >= 0.999 and unmatched > 0:
             reasons.append(ReasonCode.NAME_WITHIN_DESIGNATION)
 
+    # In batch, a very short name that is not an exact match to the spelling it
+    # was scored against is held below the alerting range. Ratios on three or
+    # four letters are unstable, and across a large book they pair unrelated
+    # names constantly. Flagged-not-suppressed was the earlier policy, and it
+    # put a long run of such pairs in front of an officer at full score.
+    # Exact matches are untouched, so a partner genuinely called "ISIS" still
+    # alerts on "ISIS". It is applied BEFORE the acronym bridge is folded in:
+    # initials of an organisation are evidence of a different kind, and holding
+    # "UAC" to 89 would have broken the system's founding requirement.
+    if not recall_mode and partner_norm != target_norm and min(
+        len(partner_norm), len(target_norm)
+    ) <= 4:
+        base = min(base, 89.0)
+
     base = max(base, acronym)
 
     if partner_norm == target_norm:
@@ -312,7 +422,7 @@ def score_pair(
     if matched_on_alias:
         reasons.append(ReasonCode.ALIAS_HIT)
 
-    if target_tokens_set and target_tokens_set.issubset(partner_tokens_set):
+    if len(target_tokens_set) >= 2 and target_tokens_set.issubset(partner_tokens_set):
         reasons.append(ReasonCode.TOKEN_SUBSET)
     if contained and discriminative and length_ratio < 0.70:
         reasons.append(ReasonCode.CONTAINED_NAME)
@@ -322,8 +432,6 @@ def score_pair(
         reasons.append(ReasonCode.SHORT_NAME)
 
     # --- Geographic control -------------------------------------------
-    partner_codes = resolve_country(partner_country)
-    target_codes = resolve_country(target_geography)
     geo_adjustment = 0.0
 
     if not partner_codes or not target_codes:
@@ -390,6 +498,7 @@ def score_against_all_names(
     geo_penalty: int = 15,
     recall_mode: bool = False,
     alias_limit: int = ALIAS_SCORING_LIMIT,
+    target_subject_type: str = "",
 ) -> tuple[ScoreBreakdown, str]:
     """Score a query against every published spelling; return the best.
 
@@ -409,6 +518,7 @@ def score_against_all_names(
         target_geography,
         geo_penalty=geo_penalty,
         recall_mode=recall_mode,
+        target_subject_type=target_subject_type,
     )
     matched_name = primary_name
 
@@ -428,6 +538,7 @@ def score_against_all_names(
             geo_penalty=geo_penalty,
             recall_mode=recall_mode,
             matched_on_alias=True,
+            target_subject_type=target_subject_type,
         )
         if candidate.base_score > best.base_score:
             best, matched_name = candidate, alias

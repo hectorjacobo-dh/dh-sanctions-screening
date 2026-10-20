@@ -144,6 +144,9 @@
   .rmx tbody tr:hover td{background:var(--hover,rgba(127,127,127,.10))}
   .rmx tbody tr.on td{background:var(--accent);color:#fff;font-weight:600}
   .rmx td.rl{color:var(--dim);width:42%}
+  /* Without this line a row reads as a name paired with an unrelated designation:
+     the alert was raised on an alias the table never showed. */
+  .matchedon{font-size:12.5px;color:var(--warn);margin:2px 0}
   .reasonval{font-size:13px;padding:7px 0;font-weight:600}
   .rmx tbody tr.on td.rl{color:#fff}
   .evdrop{border:1px dashed var(--border);border-radius:8px;padding:14px;text-align:center;color:var(--dim);cursor:pointer;font-size:13px;margin-top:8px}
@@ -1578,6 +1581,9 @@ async function renderRun(run){
     </td>
     <td>
       <strong>${esc(m.target_name)}</strong>
+      ${m.matched_alias
+        ? `<div class="matchedon" title="The published spelling this name was actually compared with">matched on <b>“${esc(m.matched_alias)}”</b></div>`
+        : ''}
       <div class="dim">${esc(m.sanctions_program)}</div>
       <div class="rc">${(m.reason_codes||'').split(',').filter(Boolean).map(c=>`<span>${esc(c)}</span>`).join('')}</div>
     </td>

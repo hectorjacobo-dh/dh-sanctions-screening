@@ -46,15 +46,24 @@ def test_names_that_are_entirely_legal_form_are_not_emptied() -> None:
 # --------------------------------------------------------------------------
 def test_acronym_expansion_matches() -> None:
     assert acronym_of("United Aircraft Corporation") == "UAC"
-    result = score_pair("UAC", "United Aircraft Corporation")
+    # Batch mode needs the country to corroborate a three-letter acronym.
+    result = score_pair("UAC", "United Aircraft Corporation", "Russia", "Russia")
     assert result.base_score >= 80
     assert ReasonCode.ACRONYM_BRIDGE in result.reasons
 
 
-def test_acronym_bridge_is_directional_agnostic() -> None:
-    forward = score_pair("UAC", "United Aircraft Corporation")
-    reverse = score_pair("United Aircraft Corporation", "UAC")
-    assert forward.base_score == reverse.base_score
+def test_acronym_bridge_works_both_ways_in_manual_search() -> None:
+    """An officer reads every row, so the bridge runs in both directions."""
+    forward = score_pair("UAC", "United Aircraft Corporation", recall_mode=True)
+    reverse = score_pair("United Aircraft Corporation", "UAC", recall_mode=True)
+    assert forward.base_score == reverse.base_score == 100.0
+
+
+def test_batch_only_bridges_when_the_partner_name_is_the_acronym() -> None:
+    """The reverse paired "AGN Alimentos y Bebidas" with the Abdallah Azzam
+    Brigades because both start A-A-B. See tests/test_matching_precision.py."""
+    assert score_pair("UAC", "United Aircraft Corporation", "Russia", "Russia").base_score >= 80
+    assert score_pair("United Aircraft Corporation", "UAC", "Russia", "Russia").base_score < 80
 
 
 # --------------------------------------------------------------------------
@@ -157,7 +166,8 @@ def test_acronym_survives_a_legal_prefix() -> None:
     from app.normalize import acronyms_of
 
     assert "UAC" in acronyms_of("PJSC United Aircraft Corporation")
-    assert score_pair("UAC", "PJSC United Aircraft Corporation").base_score >= 80
+    # Three-letter acronym in batch: the country has to corroborate it.
+    assert score_pair("UAC", "PJSC United Aircraft Corporation", "Russia", "Russia").base_score >= 80
 
 
 def test_two_letter_acronyms_do_not_bridge() -> None:

@@ -220,3 +220,40 @@ recovered automatically. The engine fails safely — it refuses to activate a
 snapshot it cannot parse and leaves the previous one in place — but someone has
 to fix it. Set `OFAC_SDN_URL` (or the equivalent) in the environment to
 override, or drop a manually downloaded copy at the path named in the error.
+
+## 10. Cleaning a finished run without repeating it
+
+A large batch takes hours. If the matching logic is later found to over-alert,
+re-scoring the stored alerts is far cheaper than re-running the file:
+
+```bash
+cd backend
+python rescore_run.py --run-id 9            # dry run: reports, changes nothing
+python rescore_run.py --run-id 9 --apply    # archives removed alerts, then deletes them
+```
+
+It is only valid while corrections make scoring **stricter**. Re-scoring can
+remove alerts but never create them, so if a future change makes matching more
+permissive, the run has to be repeated instead. It never touches an alert a
+person has resolved, keeps any alert whose designation has since left the list,
+archives what it removes to `data/` (gitignored: it holds partner names) and
+writes `RUN_RESCORED` to the audit chain with the archive's SHA-256.
+
+The first real use took an 83,642-name Latin American file from 5,435 alerts to
+565. Four faults, each pinned in `tests/test_matching_precision.py`:
+
+1. Acronyms were bridged to **individuals** ("AMF SAS" -> four people whose
+   initials spell AMF). A person has no acronym.
+2. In batch the **reverse** acronym direction paired long partner names with a
+   designation's acronym alias because both began A-A-B.
+3. `token_set_ratio` scores 100 whenever one name's word SET sits inside the
+   other's, and a length check let it through for any similar-length pair.
+   The gate now requires the words themselves to overlap.
+4. A name of one **generic** word ("INTERNATIONAL", 13 letters) counted as
+   discriminative on length alone.
+
+A lesson from doing it: an early dry run reported "0 alerts depend on the
+acronym bridge" and was wrong. A short-name cap sat *after* the acronym and
+pushed every acronym match below the 95% threshold, which looked like the rule
+working. Moving the cap exposed 461 of them. When a number looks too good,
+change one thing at a time and re-measure.
