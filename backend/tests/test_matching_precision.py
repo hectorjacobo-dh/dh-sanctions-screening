@@ -416,11 +416,11 @@ def test_a_full_name_alias_that_is_identical_still_alerts_in_batch() -> None:
     name is identical to a FULL-NAME alias of a sanctioned individual. Common
     names can genuinely be sanctioned people. A nickname is still ignored."""
     breakdown, matched = _batch(
-        "Adnan Hasan Ahmed", "AHMED, Adnan S. Hasan", aliases="Adnan Hasan Ahmed / ABU ADNAN",
+        "Ahmed Sultan", "AHMED, Adnan S. Hasan", aliases="Ahmed Sultan / ABU ADNAN",
         kind="Individual",
     )
-    assert matched == "Adnan Hasan Ahmed"
-    assert breakdown.base_score == 100.0
+    assert matched == "Ahmed Sultan"
+    assert breakdown.base_score == 95.0          # alerts at a 95% screen, but is not 100
 
 
 def test_an_article_does_not_make_a_nickname_a_full_name() -> None:
@@ -487,4 +487,45 @@ def test_a_title_plus_a_first_name_is_a_nickname_not_a_full_name() -> None:
         aliases="HERNANDEZ, Ricardo", kind="Individual",
     )
     assert matched == "HERNANDEZ, Ricardo"
+    assert breakdown.base_score == 95.0
+
+
+# ---------------------------------------------------------------------------
+# 100 is for the legal name
+# ---------------------------------------------------------------------------
+
+
+def test_a_match_through_an_alias_never_scores_100() -> None:
+    """An alias is a name the party is KNOWN BY, not the name it is registered
+    under. However exact the wording, a hit through one must not look like an
+    exact legal-name match."""
+    for partner, primary, alias, kind in (
+        ("Ahmed Sultan", "AHMED, Adnan S. Hasan", "Ahmed Sultan", "Individual"),
+        ("Garcia Carlos Alberto", "VELASQUEZ SALDARRIAGA, Hernan Dario", "GARCIA, Carlos Alberto", "Individual"),
+        ("Ricardo Hernandez SA de CV", "HERNANDEZ MEDRANO, Ricardo", "HERNANDEZ, Ricardo", "Individual"),
+    ):
+        breakdown, matched = _batch(partner, primary, aliases=alias, kind=kind)
+        assert matched == alias
+        assert breakdown.base_score < 100.0, partner
+        assert breakdown.base_score == 95.0, partner
+        codes = [str(getattr(r, "value", r)) for r in breakdown.reasons]
+        assert "EXACT_ALIAS_NAME" in codes and "EXACT_NORMALISED_NAME" not in codes
+
+
+def test_the_legal_name_still_scores_100_and_beats_an_alias() -> None:
+    """Gonzalez, Juan Carlos against GONZALEZ, Juan Carlos stays 100."""
+    breakdown, matched = _batch(
+        "Gonzalez Juan Carlos", "GONZALEZ, Juan Carlos", aliases="Pelon", kind="Individual"
+    )
     assert breakdown.base_score == 100.0
+    assert matched == "GONZALEZ, Juan Carlos"
+
+
+def test_manual_search_holds_alias_hits_below_100_too() -> None:
+    """The rule is about what 100 MEANS, so it is not a batch-only rule."""
+    breakdown, matched = score_against_all_names(
+        "Ahmed Sultan", "AHMED, Adnan S. Hasan", "Ahmed Sultan", recall_mode=True,
+        target_subject_type="Individual",
+    )
+    assert matched == "Ahmed Sultan"
+    assert breakdown.base_score < 100.0

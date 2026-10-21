@@ -53,6 +53,7 @@ class ReasonCode(StrEnum):
     GEO_UNKNOWN = "GEO_UNKNOWN_NO_ADJUSTMENT"
     SHORT_NAME = "SHORT_NAME_LOW_CONFIDENCE"
     COMMON_WORD = "COMMON_WORD_NAME"
+    EXACT_ALIAS = "EXACT_ALIAS_NAME"
 
 
 @dataclass(frozen=True)
@@ -642,6 +643,27 @@ ALIAS_SCORING_LIMIT = 25
 # The designation's primary name still is, and so is an exact primary match.
 BATCH_ALIAS_LIMIT = 0
 
+# 100 means the legal name matches exactly, and nothing else. A published alias is
+# a name the party is KNOWN BY, not the name it is registered under, so a match
+# through one is held at this ceiling however exact the wording: strong enough to
+# be seen at a 95% screen, never indistinguishable from an exact legal-name match.
+ALIAS_SCORE_CEILING = 95.0
+
+
+def _as_alias_match(breakdown: "ScoreBreakdown") -> "ScoreBreakdown":
+    """Re-express a score reached through an alias, below the exact-name ceiling."""
+    from dataclasses import replace
+
+    reasons = tuple(r for r in breakdown.reasons if r != ReasonCode.EXACT_NORMALISED)
+    if breakdown.base_score >= ALIAS_SCORE_CEILING:
+        reasons = reasons + (ReasonCode.EXACT_ALIAS,)
+    return replace(
+        breakdown,
+        base_score=min(breakdown.base_score, ALIAS_SCORE_CEILING),
+        final_score=min(breakdown.final_score, ALIAS_SCORE_CEILING),
+        reasons=reasons,
+    )
+
 # A single word that names MANY different designations is a weak identification:
 # "INTEGRAL" appears in 13 designations, "ANTARES" in 4, "ALBATROS" in 2,
 # "CAMORRA" in 1. An exact match on a one-word core therefore means less the more
@@ -729,6 +751,7 @@ def score_against_all_names(
             matched_on_alias=True,
             target_subject_type=target_subject_type,
         )
+        candidate = _as_alias_match(candidate)
         if candidate.base_score > best.base_score:
             best, matched_name = candidate, alias
 
@@ -753,6 +776,7 @@ def score_against_all_names(
                     geo_penalty=geo_penalty, recall_mode=recall_mode,
                     matched_on_alias=True, target_subject_type=target_subject_type,
                 )
+                candidate = _as_alias_match(candidate)
                 if candidate.base_score > best.base_score:
                     best, matched_name = candidate, alias
 

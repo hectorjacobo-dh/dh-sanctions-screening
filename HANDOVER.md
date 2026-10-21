@@ -313,3 +313,14 @@ looking like repeated rows.
 
 Re-running the 83,642-name file now takes about 15 minutes (was ~2.5 hours):
 aliases are off in batch and nothing competes for the machine.
+
+### 100 means the legal name matches exactly
+
+A match reached through an alias is held at `ALIAS_SCORE_CEILING` (95) and carries
+`EXACT_ALIAS_NAME` instead of `EXACT_NORMALISED_NAME`. An alias is a name the party
+is known by, not the one it is registered under, so however exact the wording it
+must not look like an exact legal-name match. It still alerts at a 95% screen; it
+disappears when the bar is raised above 95. Applies to manual search as well, since
+the rule is about what 100 means. If the legal name matches nearly as well, the
+legal name wins ("Adnan Hasan Ahmed" scores 97.6 against "AHMED, Adnan S. Hasan"
+and is reported on the primary name, not the alias).
