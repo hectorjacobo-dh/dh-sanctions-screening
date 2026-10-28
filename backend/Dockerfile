@@ -2,6 +2,8 @@ FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PIP_NO_CACHE_DIR=1 PYTHONPATH=/srv
 
+ARG BUILD_ID=latest
+
 WORKDIR /srv
 
 RUN apt-get update && apt-get install -y gcc libxml2-dev libxslt1-dev && rm -rf /var/lib/apt/lists/*
@@ -9,7 +11,7 @@ RUN apt-get update && apt-get install -y gcc libxml2-dev libxslt1-dev && rm -rf 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt && apt-get purge -y gcc && apt-get autoremove -y
 
-RUN apt-get update && apt-get install -y git && git clone https://github.com/hectorjacobo-dh/dh-sanctions-screening.git /tmp/repo && cp -r /tmp/repo/backend/app /srv/app && cp /tmp/repo/start.sh /srv/start.sh && chmod +x /srv/start.sh && rm -rf /tmp/repo && apt-get purge -y git && apt-get autoremove -y
+RUN apt-get update && apt-get install -y git && git clone https://github.com/hectorjacobo-dh/dh-sanctions-screening.git /tmp/repo && echo "Build: ${BUILD_ID}" && cp -r /tmp/repo/backend/app /srv/app && cp /tmp/repo/start.sh /srv/start.sh && chmod +x /srv/start.sh && rm -rf /tmp/repo && apt-get purge -y git && apt-get autoremove -y
 
 RUN useradd --system --uid 10001 screening && mkdir -p /srv/data /data && chown -R screening:screening /srv /data
 USER screening
