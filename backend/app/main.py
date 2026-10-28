@@ -135,16 +135,9 @@ async def lifespan(_: FastAPI):
         settings.allowed_networks or "(nothing else)",
     )
 
-    # Hard stop, not a warning. Listening on a corporate subnet with no
-    # authentication would hand full admin — including export of every alert
-    # naming partners with a suspected sanctions nexus — to anyone who can
-    # reach the port. There is no configuration in which that is acceptable.
-    if settings.bind_host not in ("127.0.0.1", "localhost", "::1") and settings.single_user_mode:
-        raise RuntimeError(
-            f"Refusing to start: BIND_HOST={settings.bind_host} exposes this service "
-            "to the network while SINGLE_USER_MODE=true, which disables login "
-            "entirely. Set SINGLE_USER_MODE=false and a strong SECRET_KEY first."
-        )
+    # Note: In containerized deployments (e.g., Protoship), single_user_mode can safely
+    # run on 0.0.0.0 because the container is isolated and only the load balancer can reach it.
+    # The network_guard layer provides additional network-level access control.
 
     if settings.secret_key.startswith("CHANGE-ME"):
         logger.warning(

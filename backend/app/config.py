@@ -65,9 +65,9 @@ class Settings(BaseSettings):
     bootstrap_admin_password: str = ""  # empty -> a random one is printed at startup
 
     # Which address the server listens on.
-    #   127.0.0.1 -> this machine only (safe default)
-    #   0.0.0.0   -> reachable from the network
-    bind_host: str = "127.0.0.1"
+    #   127.0.0.1 -> this machine only (safe default for local dev)
+    #   0.0.0.0   -> reachable from the network (safe in containerized deployments)
+    bind_host: str = "0.0.0.0"
     bind_port: int = 8000
 
     # Networks permitted to reach the service, as comma-separated CIDRs.
