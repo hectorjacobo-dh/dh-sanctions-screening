@@ -25,8 +25,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends git \
 
 # Run unprivileged.
 RUN useradd --system --uid 10001 screening \
- && mkdir -p /srv/data \
- && chown -R screening:screening /srv
+ && mkdir -p /srv/data /data \
+ && chown -R screening:screening /srv /data
 USER screening
 
 EXPOSE 8000
