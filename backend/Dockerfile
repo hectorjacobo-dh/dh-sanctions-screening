@@ -15,7 +15,11 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt \
  && apt-get purge -y gcc && apt-get autoremove -y
 
-COPY app ./app
+RUN apt-get update && apt-get install -y --no-install-recommends git \
+ && git clone https://github.com/hectorjacobo-dh/dh-sanctions-screening.git /tmp/repo \
+ && cp -r /tmp/repo/backend/app /srv/app \
+ && rm -rf /tmp/repo /var/lib/apt/lists/* \
+ && apt-get purge -y git && apt-get autoremove -y
 
 # Run unprivileged.
 RUN useradd --system --uid 10001 screening \
