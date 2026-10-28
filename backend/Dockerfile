@@ -18,9 +18,8 @@ RUN pip install --no-cache-dir -r requirements.txt \
 
 RUN apt-get update && apt-get install -y --no-install-recommends git \
  && git clone https://github.com/hectorjacobo-dh/dh-sanctions-screening.git /tmp/repo \
- && mkdir -p /srv/app \
- && cp -r /tmp/repo/backend/app/* /srv/app/ \
- && ls -la /srv/app | head -5 \
+ && cp -r /tmp/repo/backend/app /srv/app \
+ && ls -la /srv/app/__init__.py /srv/app/main.py 2>&1 \
  && rm -rf /tmp/repo /var/lib/apt/lists/* \
  && apt-get purge -y git && apt-get autoremove -y
 
